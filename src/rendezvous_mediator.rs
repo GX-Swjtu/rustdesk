@@ -493,6 +493,10 @@ impl RendezvousMediator {
         update_latency: &mut impl FnMut(),
     ) -> ResultType<()> {
         match msg {
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            Some(rendezvous_message::Union::NativeP2pV1(message)) => {
+                crate::native_p2p::invite(message, self.host.clone(), server.clone());
+            }
             Some(rendezvous_message::Union::RegisterPeerResponse(rpr)) => {
                 update_latency();
                 if rpr.request_pk {
@@ -1314,6 +1318,10 @@ impl RendezvousMediator {
             serial,
             ..Default::default()
         });
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        if let Some(rendezvous_message::Union::RegisterPeer(registration)) = msg_out.union.as_mut() {
+            crate::native_p2p::advertise(registration);
+        }
         socket.send(&msg_out).await?;
         Ok(())
     }

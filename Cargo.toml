@@ -52,7 +52,7 @@ screencapturekit = ["cpal/screencapturekit"]
 [dependencies]
 async-trait = "0.1"
 scrap = { path = "libs/scrap", features = ["wayland"] }
-hbb_common = { path = "libs/hbb_common", features = ["webrtc"] }
+hbb_common = { path = "libs/hbb_common", features = ["webrtc", "native-p2p"] }
 base = { path = "libs/base" }
 serde_derive = "1.0"
 serde = "1.0"

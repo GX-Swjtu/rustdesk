@@ -3715,6 +3715,7 @@ dependencies = [
  "protobuf-codegen",
  "rand 0.8.5",
  "regex",
+ "rustdesk-native-p2p",
  "rustls-native-certs",
  "rustls-pki-types",
  "rustls-platform-verifier",
@@ -7188,6 +7189,24 @@ dependencies = [
  "xkbcommon-dl",
  "xxhash-rust",
  "zstd",
+]
+
+[[package]]
+name = "rustdesk-native-p2p"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "bytes",
+ "futures-util",
+ "log",
+ "protobuf",
+ "protobuf-codegen",
+ "serde 1.0.228",
+ "serde_json 1.0.118",
+ "sodiumoxide",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

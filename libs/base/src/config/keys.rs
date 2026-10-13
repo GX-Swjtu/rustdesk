@@ -128,6 +128,7 @@ pub const OPTION_ALLOW_COMMAND_LINE_SETTINGS_WHEN_SETTINGS_DISABLED: &str =
 // Connection punch-through / port-forward options
 pub const OPTION_ENABLE_TCP_PUNCH: &str = "enable-tcp-punch";
 pub const OPTION_ENABLE_UDP_PUNCH: &str = "enable-udp-punch";
+pub const OPTION_ENABLE_NATIVE_P2P: &str = "enable-native-p2p";
 pub const OPTION_ENABLE_IPV6_PUNCH: &str = "enable-ipv6-punch";
 pub const OPTION_ENABLE_PORT_FORWARD_MUX: &str = "enable-port-forward-mux";
 pub const OPTION_ENABLE_WEBRTC: &str = "enable-webrtc";
@@ -270,6 +271,7 @@ pub const KEYS_LOCAL_SETTINGS: &[&str] = &[
 ];
 // DEFAULT_SETTINGS, OVERWRITE_SETTINGS
 pub const KEYS_SETTINGS: &[&str] = &[
+    OPTION_ENABLE_NATIVE_P2P,
     OPTION_ACCESS_MODE,
     OPTION_ENABLE_KEYBOARD,
     OPTION_ENABLE_CLIPBOARD,

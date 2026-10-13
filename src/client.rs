@@ -101,6 +101,8 @@ mod audio_playback_recovery;
 mod audio_state_tests;
 pub mod file_trait;
 pub mod helper;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+mod native_p2p;
 pub mod io_loop;
 pub mod screenshot;
 
@@ -476,6 +478,16 @@ impl Client {
                 (check_port(other_server, RENDEZVOUS_PORT), Vec::new(), true)
             }
         };
+
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        if !interface.is_force_relay() {
+            match native_p2p::connect(peer, &rendezvous_server, key, interface.get_lch()).await {
+                Ok(Some(connection)) => return Ok((connection, (0, rendezvous_server), true)),
+                Ok(None) => {},
+                Err(error) if error.is::<crate::native_p2p::Cancelled>() => return Err(error),
+                Err(error) => log::debug!("native-p2p unavailable; using original connection flow: {error:#}"),
+            }
+        }
 
         // Same relay gate as the v6 socket below: under any forced relay the v6 punch cannot
         // be used, so probing v6 reachability is wasted work on every such connection.

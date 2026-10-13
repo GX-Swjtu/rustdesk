@@ -1415,6 +1415,8 @@ impl<T: InvokeUiSession> Session<T> {
     }
 
     pub fn close(&self) {
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        crate::native_p2p::cancel(&self.lc);
         self.send(Data::Close);
     }
 

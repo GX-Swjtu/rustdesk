@@ -14,6 +14,8 @@ mod server;
 #[cfg(not(any(target_os = "ios")))]
 pub use self::server::*;
 mod client;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+mod native_p2p;
 mod lan;
 #[cfg(not(any(target_os = "ios")))]
 mod rendezvous_mediator;
