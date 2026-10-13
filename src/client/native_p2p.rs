@@ -81,6 +81,22 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn disabled_option_skips_native_coordination() {
+        let option = base::config::keys::OPTION_ENABLE_NATIVE_P2P.to_owned();
+        let previous = hbb_common::config::OVERWRITE_SETTINGS
+            .write().unwrap().insert(option.clone(), "N".into());
+        let result = tokio::time::timeout(
+            Duration::from_millis(100),
+            connect("peer", "invalid endpoint", "invalid key", Default::default()),
+        ).await;
+        let mut settings = hbb_common::config::OVERWRITE_SETTINGS.write().unwrap();
+        if let Some(value) = previous { settings.insert(option, value); }
+        else { settings.remove(&option); }
+        // Invalid coordination inputs would fail if the disabled path reached them.
+        assert!(result.unwrap().unwrap().is_none());
+    }
+
+    #[tokio::test]
     async fn native_kcp_ignores_late_probe_replies() {
         let easy = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());
         let hard = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());
