@@ -86,6 +86,7 @@ pub(crate) fn advertise(registration: &mut RegisterPeer) {
                 &identity.id,
                 Action::Advertise {
                     version,
+                    strategies: if version > 0 { p2p::strategy::VERSION } else { 0 },
                 },
             )?,
             &identity.key,
@@ -124,7 +125,7 @@ async fn accept(
         crate::get_rs_pk(&crate::get_key(true).await).context("native server key unavailable")?;
     let invite: Invite = protocol::decode(&message.payload, &key)?;
     let session = Session::join(endpoint, identity()?, key, invite).await?;
-    let punched = session.punch(p2p::STUN_SERVER).await?;
+    let mut punched = session.punch(p2p::STUN_SERVER).await?;
     let deadline = punched.session.deadline;
     let peer = punched.peer;
     let (kcp, stream) = timeout_at(
@@ -137,6 +138,7 @@ async fn accept(
     )
     .await??;
     log::info!("native-p2p KCP accepted from {peer}");
+    punched.session.handoff_to_caller();
     drop(punched);
     drop(slot);
     // Preserve the existing identity, password/confirmation, whitelist and permission checks.

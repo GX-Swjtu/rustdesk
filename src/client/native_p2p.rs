@@ -71,6 +71,12 @@ async fn connect_inner(
         let pk = Client::secure_connection(peer, signed_peer, &key, &mut stream).await?;
         hbb_common::anyhow::ensure!(stream.is_secured(), "native identity handshake failed");
         log::info!("native-p2p authenticated KCP connected to {}", punched.peer);
+        let session = punched.session;
+        tokio::spawn(async move {
+            if let Err(error) = session.confirm_authenticated().await {
+                log::trace!("native-p2p strategy report: {error}");
+            }
+        });
         Ok(Some((stream, true, pk, Some(kcp), "UDP-native-v1")))
     })
     .await?
