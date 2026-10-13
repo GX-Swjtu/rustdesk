@@ -85,8 +85,8 @@ pub(crate) fn advertise(registration: &mut RegisterPeer) {
             &protocol::request(
                 &identity.id,
                 Action::Advertise {
-                    version,
-                    strategies: if version > 0 { p2p::strategy::VERSION } else { 0 },
+                    capability: p2p::CAPABILITY.into(),
+                    enabled: version > 0,
                 },
             )?,
             &identity.key,
