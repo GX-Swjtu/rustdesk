@@ -46,7 +46,7 @@ export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--sysroot=$ANDROID_NDK_HO
 export VCPKG_ROOT=/path/to/vcpkg
 rustup target add aarch64-linux-android
 cargo install cargo-ndk --version 3.1.2 --locked
-./flutter/ndk_arm64.sh
+cargo ndk --platform 21 --target aarch64-linux-android build --locked --release --lib --features flutter,hwcodec
 ```
 
 Install the existing `arm64-android` vcpkg dependencies first. A host libclang,
@@ -62,6 +62,26 @@ Copy `liblibrustdesk.so` to
 `libc++_shared.so` alongside it. Build an arm64 APK with the repository's Android
 SDK/Gradle requirements. Use a test signing key for validation; do not overwrite
 the user's installed Android application or production signing credentials.
+
+The validated APK build uses JDK 17 and Android SDK 36. From `flutter/android`,
+after bridge generation and `flutter pub get` in `flutter`, run:
+
+```powershell
+./gradlew.bat ':app:assembleDebug' '--console=plain' '--max-workers=4' `
+  '-Dorg.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8' `
+  '-Pkotlin.incremental=false' '-Pkotlin.compiler.execution.strategy=in-process' `
+  '-Ptarget-platform=android-arm64' '-Psplit-per-abi=true'
+```
+
+The heap and Kotlin flags are build-host settings: the default 1 GiB heap was
+insufficient, and Kotlin incremental compilation could not relativize paths
+when the package cache and source were on different Windows drives. No Android
+application build file needs changing. The output is
+`flutter/build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk`; an external Gradle
+build-directory override changes that prefix. Check it with `aapt dump badging`
+and `apksigner verify --verbose`, and compare the APK's embedded
+`lib/arm64-v8a/librustdesk.so` hash with the compiled library. This is a debug-signed
+compatibility package, not a production-signed Android release.
 
 ## Temporary Windows deployment and rollback
 
