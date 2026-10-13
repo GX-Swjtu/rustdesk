@@ -137,6 +137,9 @@ Android does not need the new strategy's process/STUN rules.
 
 ## Required acceptance evidence
 
+The [2026-10-13 v4 acceptance record](ACCEPTANCE-20261013.md) preserves all test
+groups, the restored-desktop supplement, Android limits and remaining frp modes.
+
 Start the receiver and captures before the caller. Keep production hbbs/hbbr and
 frp untouched; the test server uses its own directory/database/keys and ports
 22115–22119. Diagnostic echo results are separate from actual remote-desktop
