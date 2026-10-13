@@ -71,7 +71,7 @@ $backup = Join-Path $ConfigurationDirectory ('native-p2p-backups\' + (Get-Date -
 New-Item -ItemType Directory -Path $backup | Out-Null
 Copy-Item -LiteralPath $runtimePath -Destination (Join-Path $backup 'runtime-before.yaml')
 Copy-Item -LiteralPath $rulesPath -Destination (Join-Path $backup 'rules-before.yaml')
-$rules = @('PROCESS-NAME,RustDesk.exe,DIRECT', 'PROCESS-NAME,rustdesk.exe,DIRECT', 'PROCESS-NAME,native-p2p-probe.exe,DIRECT', 'DOMAIN,stun.easyvoip.com,DIRECT')
+$rules = @('PROCESS-NAME,RustDesk.exe,DIRECT', 'PROCESS-NAME,rustdesk.exe,DIRECT', 'PROCESS-NAME,native-p2p-probe.exe,DIRECT', 'PROCESS-NAME,native-kcp-probe.exe,DIRECT', 'DOMAIN,stun.easyvoip.com,DIRECT')
 foreach ($rule in $rules) {
     if (!$saved.Contains($rule)) {
         if ($saved -match '(?m)^prepend: \[\]') { $saved = $saved -replace '(?m)^prepend: \[\]', "prepend:`n  - $rule" }
@@ -84,4 +84,4 @@ foreach ($rule in $rules) {
 Invoke-Core 'PUT' '/configs?force=true' @{payload=$runtime} | Out-Null
 $after = Invoke-Core 'GET' '/configs' $null
 $active = Invoke-Core 'GET' '/rules' $null
-[pscustomobject]@{backup=$backup; tun_enabled=$after.tun.enable; rules=@($active.rules | Where-Object {$_.payload -match '^(RustDesk.exe|rustdesk.exe|native-p2p-probe.exe|stun.easyvoip.com)$'} | Select-Object type,payload,proxy)} | ConvertTo-Json -Depth 5
+[pscustomobject]@{backup=$backup; tun_enabled=$after.tun.enable; rules=@($active.rules | Where-Object {$_.payload -match '^(RustDesk.exe|rustdesk.exe|native-p2p-probe.exe|native-kcp-probe.exe|stun.easyvoip.com)$'} | Select-Object type,payload,proxy)} | ConvertTo-Json -Depth 5

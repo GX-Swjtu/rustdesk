@@ -1,6 +1,6 @@
-# Native P2P v1 testing and maintenance
+# Native UDP punching: testing and maintenance
 
-This fork adds a bounded, authenticated UDP Mode 1/2 attempt before the existing
+This fork adds a bounded, authenticated UDP Mode 0/1/2/3/4 attempt before the existing
 RustDesk connection flow on Windows/Linux. The feature is enabled unless the
 `enable-native-p2p` option is `N`. Android/iOS/macOS compile out the client hooks;
 an Android configuration containing `enable-native-p2p=Y` cannot enable them.
@@ -13,23 +13,18 @@ v0.71.0 attribution are in `libs/hbb_common/native-p2p/README.md` and `NOTICE`.
 The optional dependency is restricted to Windows/Linux target dependencies in
 `hbb_common/Cargo.toml`, in addition to the client `cfg` guards.
 
-The admission fix adds the configured hbbs public key to the signed Begin
-request, and sends a signed version-0 capability when this strategy is disabled.
-Install the updated Windows clients before the updated hbbs. An older native
-test client with the updated keyed server falls back to the original connection
-flow. No Android update is required for this fix; its native hooks stay excluded.
+The only signed feature declaration is `native-udp-punch` with an enabled flag.
+There is no V1/V2 capability split, `strategies` field or V2 option. Both endpoints
+and hbbs must support the exact capability; otherwise RustDesk uses its original
+flow (an old hbbs is given at most one second). Old experimental native packages
+also fall back. The unchanged protobuf `NativeP2pV1` name is a wire-envelope
+identifier, not a second feature declaration.
 
-The adaptive extension advertises `strategies=1` inside that signed capability.
-Only two supporting clients and a supporting hbbs select Mode 1 or alternate
-TTL settings. An older native client/server pair retains fixed Mode 2. At least
-three UDP observations with a port span of 1..5 are required for the short
-prediction attempt; otherwise the first choice remains Mode 2 / TTL 7.
-Later cold connections can try TTL 4 or the OS TTL according to bounded server
-history. Each attempt chooses one strategy; it does not stack 38-second windows.
-The successful caller reports only after `Client::secure_connection` verifies
-the device identity and secures the KCP stream. This is transport confirmation,
-not a bypass or substitute for the subsequent password/confirmation flow.
-Full algorithm, limits and compatibility details are in the common README.
+The five strategy families, LAN candidates and TCP-verified multiple exits share
+one 45-second deadline. Selection subtracts one history point; only the existing
+KCP/device-identity secure handshake rewards two points. Diagnostic echo results
+do not reward history or replace desktop acceptance. The common README contains
+the exact roles, limits, source validation and coverage constraints.
 
 ## Build
 
@@ -137,8 +132,9 @@ Android does not need the new strategy's process/STUN rules.
 
 ## Required acceptance evidence
 
-The [2026-10-13 v4 acceptance record](ACCEPTANCE-20261013.md) preserves all test
-groups, the restored-desktop supplement, Android limits and remaining frp modes.
+The [2026-10-14 on-demand acceptance record](ACCEPTANCE-20261014.md) records the
+five modes, candidate validation, single capability, builds and final Windows
+tests. The [2026-10-13 v4 record](ACCEPTANCE-20261013.md) remains historical evidence.
 
 Start the receiver and captures before the caller. Keep production hbbs/hbbr and
 frp untouched; the test server uses its own directory/database/keys and ports
@@ -148,7 +144,7 @@ acceptance.
 - Run the common module tests for signatures, replay, address validation,
   unsupported capability, STUN timeout, cancellation and socket cleanup.
 - Confirm Android's target dependency graph excludes `rustdesk-native-p2p`.
-- Record actual `UDP-native-v1` transport and successful identity/login, not only
+- Record actual `UDP-native` transport and successful identity/login, not only
   a received UDP probe. Collect both endpoint mappings and relay-port capture.
 - Ten independent cold remote-desktop connections in each Windows direction;
   at least nine native UDP successes per direction. Record fallbacks as fallbacks.
@@ -171,10 +167,11 @@ acceptance.
 | `libs/base/src/config/keys.rs` | Register the disable option with the existing settings/sync machinery. |
 
 All traversal logic is in the two new client modules and the common crate.
-For the adaptive extension, changes to existing runtime code are confined to
-`src/native_p2p.rs` (signed strategy capability and cancellation handoff after
-KCP accept), `src/client/native_p2p.rs` (bounded success report after authenticated
-KCP), and the common-library pin. No additional upstream runtime hook is needed.
+For this expansion, the existing runtime changes are limited to
+`src/native_p2p.rs` (the single signed capability), `src/client/native_p2p.rs`
+(the unversioned transport label), the common pin and target-specific adapter
+query dependencies. `Set-MihomoRules.ps1` also includes the KCP diagnostic process.
+No additional upstream runtime hook is needed.
 No media, KCP implementation, TCP/WebRTC algorithm, UI, Android permission,
 foreground service or JNI code is changed. Keep the client's `hbb_common`
 baseline separate from the server baseline and cherry-pick only P2P commits;
@@ -186,3 +183,30 @@ native response is a nonempty packet that the legacy listener interprets as the
 first KCP packet, so it can stop answering the caller's legacy probes too early.
 The old UDP path is unchanged. The focused `native_kcp_ignores_late_probe_replies`
 test covers repeated native answers arriving before a HardNAT caller starts KCP.
+
+## Isolated NAT acceptance
+
+The diagnostic reuses the production common module and `src/kcp_stream.rs`:
+
+```sh
+cargo build --locked --release --manifest-path tools/native-p2p/diagnostic/Cargo.toml
+sudo python3 tools/native-p2p/nat-lab.py --hbbs /path/to/test/hbbs --probe /path/to/native-kcp-probe --output /path/to/new/results --rounds 10 --scenarios direct,predict,birthday,both-predict,mixed,multi,loss,lan,public,blocked,unverified,both-random,cancel,bad-proof
+```
+
+Linux `ip`, `nft`, `tc` and `ss` are required. All interfaces, firewall tables,
+processes, databases and keys live in uniquely named disposable namespaces.
+Keep binaries immutable during a run; results include their SHA-256 hashes.
+Retain failed groups and record fixes before another group. LAN/public tests use
+explicit veth fixtures; shipped RustDesk always discovers physical interfaces.
+Do not label simulation as real dual-HardNAT, multi-egress or Android acceptance.
+
+Rollback of the whole feature uses `enable-native-p2p=N`, synchronised through
+the existing Windows service configuration mechanism. There is no partial V2
+rollback. To restore the previous test package, run `Update-TestClient.ps1 -Package`
+with its saved `previous-client.zip`; the original-installation restore is unchanged.
+
+When testing fallback, note that upstream `--relay` persists the peer's
+`force-always-relay` option. Back up and clear that option before another native
+test. After changing the service feature option, wait for fresh signed
+advertisements from both endpoints. Begin a soak clock only after the native
+secure KCP handshake and desktop login are confirmed.
