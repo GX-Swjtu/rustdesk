@@ -78,16 +78,14 @@ pub(crate) fn slot() -> Option<OwnedSemaphorePermit> {
 }
 
 pub(crate) fn advertise(registration: &mut RegisterPeer) {
-    if !enabled() {
-        return;
-    }
+    let version = if enabled() { p2p::VERSION } else { 0 };
     let capability = (|| -> Result<_> {
         let identity = identity()?;
         protocol::encode(
             &protocol::request(
                 &identity.id,
                 Action::Advertise {
-                    version: p2p::VERSION,
+                    version,
                 },
             )?,
             &identity.key,
@@ -95,7 +93,7 @@ pub(crate) fn advertise(registration: &mut RegisterPeer) {
     })();
     match capability {
         Ok(payload) => {
-            registration.native_p2p_version = p2p::VERSION;
+            registration.native_p2p_version = version;
             registration.native_p2p_capability = payload.into();
         }
         Err(error) => log::trace!("native capability unavailable: {error}"),

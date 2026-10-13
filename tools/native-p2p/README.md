@@ -13,6 +13,12 @@ v0.71.0 attribution are in `libs/hbb_common/native-p2p/README.md` and `NOTICE`.
 The optional dependency is restricted to Windows/Linux target dependencies in
 `hbb_common/Cargo.toml`, in addition to the client `cfg` guards.
 
+The admission fix adds the configured hbbs public key to the signed Begin
+request, and sends a signed version-0 capability when this strategy is disabled.
+Install the updated Windows clients before the updated hbbs. An older native
+test client with the updated keyed server falls back to the original connection
+flow. No Android update is required for this fix; its native hooks stay excluded.
+
 ## Build
 
 Initialize submodules recursively. Use the existing pinned versions from
