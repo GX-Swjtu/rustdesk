@@ -6,6 +6,7 @@ use tokio::{net::UdpSocket, time::timeout};
 
 hbb_common::lazy_static::lazy_static! {
     static ref REGISTRATIONS: Mutex<HashMap<String, Instant>> = Mutex::new(HashMap::new());
+    static ref CONFIRMED_SERVER: Mutex<Option<(String, sign::PublicKey)>> = Mutex::new(None);
 }
 
 pub(crate) fn record(endpoint: &str, registration: &RendezvousMessage) {
@@ -49,14 +50,21 @@ pub(crate) async fn begin(
     slot: OwnedSemaphorePermit,
 ) -> Result<Option<(Session, Registration)>> {
     let deadline = Instant::now() + Duration::from_secs(p2p::ATTEMPT_SECONDS);
-    // Registration must not extend the compatibility wait for an old server.
-    timeout(Duration::from_secs(1), async {
+    // Consume the previous proof so failure or cancellation also forgets stale support.
+    let confirmed = CONFIRMED_SERVER.lock().unwrap().take()
+        .is_some_and(|(address, key)| address == endpoint && key == server_key);
+    let limit = Duration::from_secs(if confirmed { 5 } else { 1 });
+    let result = timeout(limit, async {
         let registration = prepare(endpoint, slot).await?;
-        let Some(mut session) = Session::begin(endpoint, registration.identity.clone(), server_key, peer).await?
+        let Some(mut session) = Session::begin_with_timeout(endpoint, registration.identity.clone(), server_key, peer, limit).await?
         else { return Ok(None); };
         session.deadline = session.deadline.min(deadline);
         Ok(Some((session, registration)))
-    }).await?
+    }).await?;
+    if matches!(&result, Ok(Some(_))) {
+        *CONFIRMED_SERVER.lock().unwrap() = Some((endpoint.into(), server_key));
+    }
+    result
 }
 
 async fn prepare(endpoint: &str, slot: OwnedSemaphorePermit) -> Result<Registration> {
@@ -216,5 +224,57 @@ mod tests {
             tcp_task.abort();
             let _ = tcp_task.await;
         }
+    }
+
+    #[tokio::test]
+    async fn only_authenticated_server_gets_longer_preparation_budget() {
+        use hbb_common::{bytes_codec::BytesCodec, futures::{SinkExt, StreamExt}, tokio_util::codec::Framed};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let device_key = super::super::super::identity().unwrap().key.public_key();
+        let (server_key, secret) = sign::gen_keypair();
+        let wrong_key = sign::gen_keypair().0;
+        let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = tcp.local_addr().unwrap();
+        let identity = super::super::super::identity().unwrap();
+        record(&address.to_string(), &RendezvousMessage::parse_from_bytes(&advertisement(&identity, true).unwrap()).unwrap());
+        let delay = Arc::new(AtomicU64::new(0));
+        let tcp_delay = delay.clone();
+        let tcp_task = tokio::spawn(async move {
+            loop {
+                let (stream, _) = tcp.accept().await.unwrap();
+                let mut stream = Framed::new(stream, BytesCodec::new());
+                let message = RendezvousMessage::parse_from_bytes(&stream.next().await.unwrap().unwrap()).unwrap();
+                let request: protocol::Request = protocol::decode(&message.native_p2p_v1().payload, &device_key).unwrap();
+                let reply = if let Action::Begin { box_pk, target, .. } = request.action {
+                    tokio::time::sleep(Duration::from_millis(tcp_delay.load(Ordering::Relaxed))).await;
+                    protocol::Reply::Ticket(protocol::Ticket { session: protocol::id(), expires: protocol::now().unwrap() + 45,
+                        secret_box: protocol::seal(&[1; 32], &box_pk).unwrap(), peer_id: target, signed_peer: vec![],
+                        initiator: true, capability: p2p::CAPABILITY.into() })
+                } else { protocol::Reply::Closed };
+                let response = protocol::Response { nonce: request.nonce, time: protocol::now().unwrap(), reply };
+                // Timeout/cancellation may have closed the caller before this delayed reply.
+                let _ = stream.send(p2p::transport::envelope(protocol::encode(&response, &secret).unwrap()).write_to_bytes().unwrap().into()).await;
+            }
+        });
+        let permits = Arc::new(Semaphore::new(1));
+        for (delay_ms, key, succeeds) in [(0, server_key, true), (1200, server_key, true),
+            (1200, wrong_key, false), (0, wrong_key, false), (1200, wrong_key, false)] {
+            delay.store(delay_ms, Ordering::Relaxed);
+            let slot = timeout(Duration::from_secs(2), permits.clone().acquire_owned()).await.unwrap().unwrap();
+            let started = Instant::now();
+            let result = begin(&address.to_string(), key, "peer", slot).await;
+            if succeeds {
+                let (session, registration) = result.unwrap().unwrap();
+                assert!(session.deadline <= started + Duration::from_secs(p2p::ATTEMPT_SECONDS) + Duration::from_millis(100));
+                drop((session, registration));
+            } else {
+                assert!(result.is_err());
+                assert!(started.elapsed() < Duration::from_millis(1300), "unconfirmed server inherited a longer wait");
+            }
+        }
+        drop(timeout(Duration::from_secs(2), permits.acquire_owned()).await.unwrap().unwrap());
+        tcp_task.abort();
+        let _ = tcp_task.await;
+        record(&address.to_string(), &RendezvousMessage::new());
     }
 }

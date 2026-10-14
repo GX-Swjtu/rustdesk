@@ -11,7 +11,9 @@ The previous foreground/Wi-Fi experiment imposed these restrictions; they were
 not upstream RustDesk requirements and have been removed at the user's request.
 
 Current package checks are in
-[ANDROID-REVIEW-FIXES-20261014.md](ANDROID-REVIEW-FIXES-20261014.md).
+[ANDROID-PREPARATION-BUDGET-20261014.md](ANDROID-PREPARATION-BUDGET-20261014.md).
+The [registration review fixes](ANDROID-REVIEW-FIXES-20261014.md) document the
+preceding package with a fixed one-second preparation deadline.
 The [initial default-on checks](ANDROID-DEFAULT-VALIDATION-20261014.md) precede
 the registration and compatibility-budget fixes.
 The earlier [validation record](ANDROID-VALIDATION-20261014.md) describes the
@@ -67,9 +69,14 @@ superseded opt-in package only.
   controller may briefly own one extra UDP registration socket.
 - Explicit RustDesk proxies, WebSocket signaling, force-relay and disabled UDP
   prevent the Android native path. Unsupported peers/servers use the original
-  flow. Temporary registration and server capability probing share one
-  one-second compatibility deadline. Only a supported session proceeds to the
-  remaining portion of the 45-second total attempt budget.
+  flow. Temporary registration and capability probing share one second for an
+  unknown server, or five seconds for the most recently authenticated native
+  server with the same endpoint and public key. Only a valid signed native ticket
+  records support; an unsigned registration reply or a saved key does not.
+  This single record is process-local, consumed when the next attempt starts and
+  refreshed only after successful negotiation. Failure, cancellation, an
+  unsupported peer or an endpoint/key change leaves the next attempt at one second.
+  Registration, negotiation, probes and KCP still share the 45-second total budget.
 
 ## PC control
 
@@ -106,10 +113,11 @@ arm64 JNI directory, then assemble the debug APK. No bridge generation, new
 Cargo dependency, SDK or permission upgrade is needed. Verify APK signing, ABI,
 embedded Rust-library SHA-256 and the `Java_ffi_FFI_initNativeP2p` export.
 
-The seven targeted host tests cover default-on/no-LAN admission, disable/UDP-off,
+The eight targeted host tests cover default-on/no-LAN admission, disable/UDP-off,
 settings cancellation and socket cleanup, bounded LAN candidates, temporary
 registration across rapid reconnects, the shared registration/capability deadline,
-original bypass policies and KCP handoff. Host tests and successful
+authenticated support and delayed replies, original bypass policies and KCP handoff.
+Host tests and successful
 compilation do not establish Android real-device P2P or background operation.
 
 Real-device acceptance remains pending: both connection directions with TUN;

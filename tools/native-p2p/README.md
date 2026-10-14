@@ -23,7 +23,10 @@ The optional dependency is restricted to Windows/Linux/Android target dependenci
 The only signed feature declaration is `native-udp-punch` with an enabled flag.
 There is no V1/V2 capability split, `strategies` field or V2 option. Both endpoints
 and hbbs must support the exact capability; otherwise RustDesk uses its original
-flow (an old hbbs is given at most one second). Old experimental native packages
+flow (an unknown hbbs is given at most one second). Android allows up to five
+seconds of preparation for its most recently authenticated native server, bound
+to that endpoint and public key; failure or cancellation clears that proof.
+Both deadlines remain inside the 45-second attempt budget. Old experimental native packages
 also fall back. The unchanged protobuf `NativeP2pV1` name is a wire-envelope
 identifier, not a second feature declaration.
 
