@@ -101,7 +101,7 @@ mod audio_playback_recovery;
 mod audio_state_tests;
 pub mod file_trait;
 pub mod helper;
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "android"))]
 mod native_p2p;
 pub mod io_loop;
 pub mod screenshot;
@@ -479,7 +479,7 @@ impl Client {
             }
         };
 
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "android"))]
         if !interface.is_force_relay() {
             match native_p2p::connect(peer, &rendezvous_server, key, interface.get_lch()).await {
                 Ok(Some(connection)) => return Ok((connection, (0, rendezvous_server), true)),

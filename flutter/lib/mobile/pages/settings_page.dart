@@ -99,6 +99,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
   var _enableTrustedDevices = false;
   var _enableTcpPunch = false;
   var _enableUdpPunch = false;
+  var _enableNativeP2p = true;
   var _allowInsecureTlsFallback = false;
   var _disableUdp = false;
   var _enableIpv6Punch = false;
@@ -145,6 +146,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
     _enableTrustedDevices = mainGetBoolOptionSync(kOptionEnableTrustedDevices);
     _enableTcpPunch = mainGetLocalBoolOptionSync(kOptionEnableTcpPunch);
     _enableUdpPunch = mainGetLocalBoolOptionSync(kOptionEnableUdpPunch);
+    _enableNativeP2p = bind.mainGetOptionSync(key: kOptionEnableNativeP2p) != 'N';
     _enableIpv6Punch = mainGetLocalBoolOptionSync(kOptionEnableIpv6Punch);
     _enableWebrtc = mainGetLocalBoolOptionSync(kOptionEnableWebrtc);
     _allowAskForNoteAtEndOfConnection =
@@ -861,6 +863,23 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                           mainGetLocalBoolOptionSync(kOptionEnableIpv6Punch);
                       setState(() {
                         _enableIpv6Punch = newValue;
+                      });
+                    },
+            ),
+          if (isAndroid && !disabledSettings && !_hideNetwork && !_isUsingPublicServer)
+            SettingsTile.switchTile(
+              title: Text('${translate('Enable UDP hole punching')} (Native P2P beta)'),
+              description: const Text('IPv4'),
+              initialValue: _enableNativeP2p,
+              onToggle: isOptionFixed(kOptionEnableNativeP2p)
+                  ? null
+                  : (value) async {
+                      await bind.mainSetOption(
+                          key: kOptionEnableNativeP2p, value: value ? 'Y' : 'N');
+                      if (!mounted) return;
+                      setState(() {
+                        _enableNativeP2p =
+                            bind.mainGetOptionSync(key: kOptionEnableNativeP2p) != 'N';
                       });
                     },
             ),

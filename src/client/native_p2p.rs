@@ -25,16 +25,28 @@ pub(super) async fn connect(
         return Ok(None);
     };
     let pending = crate::native_p2p::Pending::new(&lc);
-    tokio::select! {
+    #[cfg(target_os = "android")]
+    let environment = crate::native_p2p::android::environment()
+        .context("Android native P2P environment unavailable")?;
+    #[cfg(not(target_os = "android"))]
+    let connection = connect_inner(peer, endpoint, key);
+    #[cfg(target_os = "android")]
+    let connection = environment.run(connect_inner(peer, endpoint, key, &environment, _slot));
+    let result = tokio::select! {
         _ = pending.0.cancelled() => Err(crate::native_p2p::Cancelled.into()),
-        result = connect_inner(peer, endpoint, key) => result,
-    }
+        result = connection => result,
+    };
+    #[cfg(target_os = "android")]
+    if pending.0.is_cancelled() { return Err(crate::native_p2p::Cancelled.into()); }
+    result
 }
 
 async fn connect_inner(
     peer: &str,
     endpoint: &str,
     key: &str,
+    #[cfg(target_os = "android")] environment: &crate::native_p2p::android::Environment,
+    #[cfg(target_os = "android")] slot: hbb_common::tokio::sync::OwnedSemaphorePermit,
 ) -> ResultType<
     Option<(
         Stream,
@@ -50,8 +62,15 @@ async fn connect_inner(
         key.to_owned()
     };
     let server_key = crate::get_rs_pk(&key).context("native server key unavailable")?;
+    #[cfg(not(target_os = "android"))]
     let Some(session) =
         Session::begin(endpoint, crate::native_p2p::identity()?, server_key, peer).await?
+    else {
+        return Ok(None);
+    };
+    #[cfg(target_os = "android")]
+    let Some((session, _registration)) =
+        crate::native_p2p::android::begin(endpoint, server_key, peer, slot).await?
     else {
         return Ok(None);
     };
@@ -60,7 +79,10 @@ async fn connect_inner(
     hbb_common::anyhow::ensure!(signed_id == peer, "native target identity mismatch");
     let deadline = session.deadline;
     timeout_at(deadline, async move {
+        #[cfg(not(target_os = "android"))]
         let punched = session.punch(p2p::STUN_SERVER).await?;
+        #[cfg(target_os = "android")]
+        let punched = session.punch_on(p2p::STUN_SERVER, &environment.interfaces).await?;
         // The authenticated native probes already established this socket. The legacy
         // probe protocol mistakes a late native answer for the first KCP packet.
         let (kcp, mut stream) = KcpStream::connect(
@@ -73,6 +95,8 @@ async fn connect_inner(
         log::info!("native-p2p authenticated KCP connected to {}", punched.peer);
         let session = punched.session;
         tokio::spawn(async move {
+            #[cfg(target_os = "android")]
+            let _registration = _registration;
             if let Err(error) = session.confirm_authenticated().await {
                 log::trace!("native-p2p strategy report: {error}");
             }

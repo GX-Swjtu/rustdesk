@@ -388,6 +388,8 @@ impl RendezvousMediator {
         let mut last_dns_check = Instant::now();
         let mut old_latency = 0;
         let mut ema_latency = 0;
+        #[cfg(target_os = "android")]
+        let mut native_registration = 0;
         loop {
             let mut update_latency = || {
                 last_register_resp = Some(Instant::now());
@@ -446,6 +448,12 @@ impl RendezvousMediator {
                     }
                     let now = Some(Instant::now());
                     let expired = last_register_resp.map(|x| x.elapsed().as_millis() as i64 >= REG_INTERVAL).unwrap_or(true);
+                    #[cfg(target_os = "android")]
+                    if crate::native_p2p::android::registration_changed(&mut native_registration) {
+                        rz.register_peer(Sink::Framed(&mut socket, &addr)).await?;
+                        last_register_sent = now;
+                        continue;
+                    }
                     let timeout = last_register_sent.map(|x| x.elapsed().as_millis() as i64 >= reg_timeout).unwrap_or(false);
                     // temporarily disable exponential backoff for android before we add wakeup trigger to force connect in android
                     #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -493,7 +501,7 @@ impl RendezvousMediator {
         update_latency: &mut impl FnMut(),
     ) -> ResultType<()> {
         match msg {
-            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            #[cfg(any(target_os = "windows", target_os = "linux", target_os = "android"))]
             Some(rendezvous_message::Union::NativeP2pV1(message)) => {
                 crate::native_p2p::invite(message, self.host.clone(), server.clone());
             }
@@ -1318,11 +1326,13 @@ impl RendezvousMediator {
             serial,
             ..Default::default()
         });
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "android"))]
         if let Some(rendezvous_message::Union::RegisterPeer(registration)) = msg_out.union.as_mut() {
             crate::native_p2p::advertise(registration);
         }
         socket.send(&msg_out).await?;
+        #[cfg(target_os = "android")]
+        crate::native_p2p::android::record_registration(&self.host, &msg_out);
         Ok(())
     }
 

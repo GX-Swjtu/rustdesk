@@ -19,6 +19,9 @@ use hbb_common::{
 };
 use std::sync::{Arc, Mutex, RwLock};
 
+#[cfg(any(target_os = "android", test))]
+pub(crate) mod android;
+
 hbb_common::lazy_static::lazy_static! {
     static ref ATTEMPT: Arc<Semaphore> = Arc::new(Semaphore::new(1));
     static ref PENDING: Mutex<Option<(usize, CancellationToken)>> = Mutex::new(None);
@@ -59,6 +62,10 @@ pub(crate) fn cancel(lc: &Arc<RwLock<crate::client::LoginConfigHandler>>) {
 }
 
 pub(crate) fn enabled() -> bool {
+    #[cfg(target_os = "android")]
+    if !android::enabled() {
+        return false;
+    }
     Config::get_option(keys::OPTION_ENABLE_NATIVE_P2P) != "N"
         && !Config::is_proxy()
         && !config::use_ws()
@@ -102,7 +109,12 @@ pub(crate) fn advertise(registration: &mut RegisterPeer) {
 }
 
 pub(crate) fn invite(message: NativeP2pV1, endpoint: String, server: crate::server::ServerPtr) {
-    if !enabled() || message.version != p2p::VERSION {
+    if message.version != p2p::VERSION {
+        return;
+    }
+    if !enabled() {
+        #[cfg(target_os = "android")]
+        android::decline(message, endpoint);
         return;
     }
     let Some(slot) = slot() else {
@@ -125,18 +137,26 @@ async fn accept(
         crate::get_rs_pk(&crate::get_key(true).await).context("native server key unavailable")?;
     let invite: Invite = protocol::decode(&message.payload, &key)?;
     let session = Session::join(endpoint, identity()?, key, invite).await?;
+    #[cfg(not(target_os = "android"))]
     let mut punched = session.punch(p2p::STUN_SERVER).await?;
+    #[cfg(target_os = "android")]
+    let environment = android::environment().context("Android native P2P environment unavailable")?;
+    #[cfg(target_os = "android")]
+    let mut punched = environment.run(session.punch_on(p2p::STUN_SERVER, &environment.interfaces)).await?;
     let deadline = punched.session.deadline;
     let peer = punched.peer;
-    let (kcp, stream) = timeout_at(
+    let accept = timeout_at(
         deadline,
         crate::kcp_stream::KcpStream::accept(
             punched.socket.clone(),
             deadline.saturating_duration_since(Instant::now()),
             None,
         ),
-    )
-    .await??;
+    );
+    #[cfg(not(target_os = "android"))]
+    let (kcp, stream) = accept.await??;
+    #[cfg(target_os = "android")]
+    let (kcp, stream) = environment.run(async { Ok(accept.await??) }).await?;
     log::info!("native-p2p KCP accepted from {peer}");
     punched.session.handoff_to_caller();
     drop(punched);

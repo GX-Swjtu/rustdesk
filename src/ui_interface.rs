@@ -461,7 +461,11 @@ pub fn set_option(key: String, value: String) {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let _nat = crate::CheckTestNatType::new();
+        #[cfg(target_os = "android")]
+        let native_p2p_changed = key == keys::OPTION_ENABLE_NATIVE_P2P || key == keys::OPTION_DISABLE_UDP;
         Config::set_option(key, value);
+        #[cfg(target_os = "android")]
+        if native_p2p_changed { crate::native_p2p::android::settings_changed(); }
     }
 }
 

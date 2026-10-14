@@ -591,6 +591,20 @@ class _GeneralState extends State<_General> {
           isServer: false,
         ),
       ],
+      if (!isWeb &&
+          (isWindows || isLinux) &&
+          !bind.isDisableSettings() &&
+          bind.mainGetBuildinOption(key: kOptionHideNetworkSetting) != 'Y')
+        futureBuilder(
+          future: bind.mainIsUsingPublicServer(),
+          hasData: (isUsingPublicServer) => isUsingPublicServer
+              ? const Offstage()
+              : _OptionCheckBox(
+                  context,
+                  '${translate('Enable UDP hole punching')} (Native P2P beta)',
+                  kOptionEnableNativeP2p,
+                ),
+        ),
       if (!incomingOnly) ...webrtcOptions(context),
       if (!isWeb && !incomingOnly)
         Tooltip(

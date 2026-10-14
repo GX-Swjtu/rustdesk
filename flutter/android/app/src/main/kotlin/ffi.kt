@@ -22,6 +22,10 @@ object FFI {
     external fun translateLocale(localeName: String, input: String): String
     external fun refreshScreen()
     external fun closeAllSessions()
+    external fun initNativeP2p(ctx: Context)
+    @androidx.annotation.Keep
+    fun nativeP2pInterfaces(ctx: Context): String =
+        com.carriez.flutter_hbb.NativeP2pNetwork.interfaces(ctx)
     external fun setFrameRawEnable(name: String, value: Boolean)
     external fun setCodecInfo(info: String)
     external fun getLocalOption(key: String): String

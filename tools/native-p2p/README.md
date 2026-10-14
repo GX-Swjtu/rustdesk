@@ -2,15 +2,22 @@
 
 This fork adds a bounded, authenticated UDP Mode 0/1/2/3/4 attempt before the existing
 RustDesk connection flow on Windows/Linux. The feature is enabled unless the
-`enable-native-p2p` option is `N`. Android/iOS/macOS compile out the client hooks;
-an Android configuration containing `enable-native-p2p=Y` cannot enable them.
+`enable-native-p2p` option is `N`. Android uses the same default-on switch,
+described in [ANDROID.md](ANDROID.md); iOS/macOS compile out the hooks.
 Explicit RustDesk proxies, WebSocket signaling and forced relay keep their
 existing behavior. The transport still uses the upstream KCP, device identity,
 login/password/confirmation, clipboard, input and file-transfer implementation.
 
+The **Enable UDP hole punching (Native P2P beta)** graphical switch is in PC
+**Settings > General > Other** and Android **Settings** when using a self-hosted server.
+Both use `enable-native-p2p`, default on, and respect an explicit `N`. The original
+UDP punching switch remains independent. The PC checkbox uses the existing
+service-sync API without a network-page unlock and respects hidden/fixed settings;
+no new configuration or connection-flow mechanism is added.
+
 The common implementation, protocol details, limits, diagnostic usage and frp
 v0.71.0 attribution are in `libs/hbb_common/native-p2p/README.md` and `NOTICE`.
-The optional dependency is restricted to Windows/Linux target dependencies in
+The optional dependency is restricted to Windows/Linux/Android target dependencies in
 `hbb_common/Cargo.toml`, in addition to the client `cfg` guards.
 
 The only signed feature declaration is `native-udp-punch` with an enabled flag.
@@ -94,7 +101,7 @@ application build file needs changing. The output is
 build-directory override changes that prefix. Check it with `aapt dump badging`
 and `apksigner verify --verbose`, and compare the APK's embedded
 `lib/arm64-v8a/librustdesk.so` hash with the compiled library. This is a debug-signed
-compatibility package, not a production-signed Android release.
+test package, not a production-signed Android release.
 
 ## Temporary Windows deployment and rollback
 
@@ -128,7 +135,8 @@ IPC authentication to make a test harness work across them.
 adds narrow process/domain DIRECT rules while retaining TUN. Use its parameters
 for the active profile/controller. Check the runtime TUN state, actual STUN
 mapping and authenticated peer address: the word DIRECT alone is not evidence.
-Android does not need the new strategy's process/STUN rules.
+For the Android experiment, exclude the RustDesk application from the VPN app's
+per-app routing while retaining TUN for other applications; see ANDROID.md.
 
 ## Required acceptance evidence
 
@@ -143,7 +151,8 @@ acceptance.
 
 - Run the common module tests for signatures, replay, address validation,
   unsupported capability, STUN timeout, cancellation and socket cleanup.
-- Confirm Android's target dependency graph excludes `rustdesk-native-p2p`.
+- Confirm Android links `rustdesk-native-p2p`, enables it by default and respects
+  the disable switch without additional foreground/Wi-Fi restrictions.
 - Record actual `UDP-native` transport and successful identity/login, not only
   a received UDP probe. Collect both endpoint mappings and relay-port capture.
 - Ten independent cold remote-desktop connections in each Windows direction;
@@ -160,7 +169,7 @@ acceptance.
 | --- | --- |
 | `Cargo.toml`, `Cargo.lock` | Enable the optional common module and pin its dependencies. |
 | `.gitmodules`, `libs/hbb_common` | Pin the feature branch on the client's own common-library baseline. |
-| `src/lib.rs` | Compile the new module only on Windows/Linux. |
+| `src/lib.rs` | Compile the new module on Windows/Linux/Android. |
 | `src/client.rs` | One platform/forced-relay-gated attempt before the unchanged legacy flow. |
 | `src/rendezvous_mediator.rs` | Signed capability registration and platform-gated invitation dispatch. |
 | `src/ui_session_interface.rs` | Cancel the pending attempt when the existing session closes. |
@@ -172,8 +181,9 @@ For this expansion, the existing runtime changes are limited to
 (the unversioned transport label), the common pin and target-specific adapter
 query dependencies. `Set-MihomoRules.ps1` also includes the KCP diagnostic process.
 No additional upstream runtime hook is needed.
-No media, KCP implementation, TCP/WebRTC algorithm, UI, Android permission,
-foreground service or JNI code is changed. Keep the client's `hbb_common`
+The Android integration adds isolated on-demand LAN discovery, a JNI hook and
+mobile toggle listed in [ANDROID.md](ANDROID.md). No media, KCP implementation,
+TCP/WebRTC algorithm, Android permission or foreground service is changed. Keep the client's `hbb_common`
 baseline separate from the server baseline and cherry-pick only P2P commits;
 do not merge the whole common-library branch across the two parents.
 
