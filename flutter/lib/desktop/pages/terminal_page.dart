@@ -1,3 +1,4 @@
+import 'package:flutter_hbb/common/native_p2p_dialog.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -121,7 +122,7 @@ class _TerminalPageState extends State<TerminalPage>
       if (!isExistingConnection) {
         // First terminal - show loading dialog, wait for onReady
         _ffi.dialogManager
-            .showLoading(translate('Connecting...'), onCancel: closeConnection);
+            .showConnectionWaiting(_ffi.sessionId, onCancel: closeConnection);
       } else {
         // Additional terminal - connection already established
         // Open the terminal directly

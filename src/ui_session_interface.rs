@@ -59,6 +59,10 @@ const CHANGE_RESOLUTION_VALID_TIMEOUT_SECS: u64 = 15;
 
 #[derive(Clone, Default)]
 pub struct Session<T: InvokeUiSession> {
+    #[cfg(all(feature = "flutter", any(target_os = "windows", target_os = "linux", target_os = "android")))]
+    pub native_waiting: Arc<crate::native_p2p::waiting::Context>,
+    #[cfg(all(feature = "flutter", any(target_os = "windows", target_os = "linux", target_os = "android")))]
+    pub native_mapping: Option<(i32, u64)>,
     pub password: String,
     pub args: Vec<String>,
     pub lc: Arc<RwLock<LoginConfigHandler>>,
@@ -605,6 +609,8 @@ impl<T: InvokeUiSession> Session<T> {
     }
 
     pub fn remove_port_forward(&self, port: i32) {
+        #[cfg(all(feature = "flutter", any(target_os = "windows", target_os = "linux", target_os = "android")))]
+        self.native_waiting.cancel_mapping(port);
         let mut config = self.load_config();
         config.port_forwards = config
             .port_forwards
@@ -1415,6 +1421,8 @@ impl<T: InvokeUiSession> Session<T> {
     }
 
     pub fn close(&self) {
+        #[cfg(all(feature = "flutter", any(target_os = "windows", target_os = "linux", target_os = "android")))]
+        self.native_waiting.close();
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "android"))]
         crate::native_p2p::cancel(&self.lc);
         self.send(Data::Close);
@@ -1778,6 +1786,11 @@ impl<T: InvokeUiSession> FileManager for Session<T> {}
 
 #[async_trait]
 impl<T: InvokeUiSession> Interface for Session<T> {
+    #[cfg(all(feature = "flutter", any(target_os = "windows", target_os = "linux", target_os = "android")))]
+    fn native_scope(&self) -> Option<crate::native_p2p::waiting::Scope> {
+        Some(crate::native_p2p::waiting::Scope { window: self.native_waiting.clone(), mapping: self.native_mapping })
+    }
+
     fn get_lch(&self) -> Arc<RwLock<LoginConfigHandler>> {
         return self.lc.clone();
     }
@@ -1997,6 +2010,8 @@ pub async fn io_loop<T: InvokeUiSession>(handler: Session<T>, round: u32) {
                         let (sender, receiver) = mpsc::unbounded_channel::<Data>();
                         queues.insert(port, sender);
                         let handler = handler.clone();
+                        #[cfg(all(feature = "flutter", any(target_os = "windows", target_os = "linux")))]
+                        let handler = { let mut handler = handler; handler.native_mapping = Some(handler.native_waiting.mapping(port)); handler };
                         let key = key.clone();
                         let token = token.clone();
                         tokio::spawn(async move {
@@ -2013,6 +2028,8 @@ pub async fn io_loop<T: InvokeUiSession>(handler: Session<T>, round: u32) {
                         });
                     }
                     Some(Data::RemovePortForward(port)) => {
+                        #[cfg(all(feature = "flutter", any(target_os = "windows", target_os = "linux")))]
+                        handler.native_waiting.cancel_mapping(port);
                         if let Some(s) = queues.remove(&port) {
                             s.send(Data::Close).ok();
                         }
@@ -2066,6 +2083,8 @@ async fn start_one_port_forward<T: InvokeUiSession>(
     key: &str,
     token: &str,
 ) {
+    #[cfg(all(feature = "flutter", any(target_os = "windows", target_os = "linux", target_os = "android")))]
+    let handler = { let mut handler = handler; if handler.native_mapping.is_none() { handler.native_mapping = Some(handler.native_waiting.mapping(port)); } handler };
     if let Err(err) = crate::port_forward::listen(
         handler.get_id(),
         handler.password.clone(),

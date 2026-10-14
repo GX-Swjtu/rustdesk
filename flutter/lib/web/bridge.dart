@@ -249,6 +249,9 @@ class RustdeskImpl {
     return false;
   }
 
+  Future<String> sessionNativeP2PSnapshot({required UuidValue sessionId}) async => '[]';
+  Future<bool> sessionNativeP2PControl({required UuidValue sessionId, required String flowId, required String action}) async => false;
+
   Future<void> sessionReconnect(
       {required UuidValue sessionId, required bool forceRelay, dynamic hint}) {
     return Future(() => js.context.callMethod('setByName', ['reconnect']));

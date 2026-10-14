@@ -1,3 +1,4 @@
+import 'package:flutter_hbb/common/native_p2p_dialog.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -252,7 +253,7 @@ class _FileManagerPageState extends State<FileManagerPage> {
         forceRelay: widget.forceRelay);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       gFFI.dialogManager
-          .showLoading(translate('Connecting...'), onCancel: closeConnection);
+          .showConnectionWaiting(gFFI.sessionId, onCancel: closeConnection);
     });
     gFFI.ffiModel.updateEventListener(gFFI.sessionId, widget.id);
     WakelockManager.enable(_uniqueKey);

@@ -3098,3 +3098,24 @@ mod tests {
         assert_eq!(result.0, "error:unsupported");
     }
 }
+
+// On-demand snapshots avoid feeding an unbounded event stream during long waits.
+pub fn session_native_p2p_snapshot(session_id: SessionID) -> String {
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "android"))]
+    if let Some(session) = sessions::get_session_by_session_id(&session_id) {
+        return session.native_waiting.snapshots();
+    }
+    "[]".into()
+}
+
+pub fn session_native_p2p_control(session_id: SessionID, flow_id: String, action: String) -> bool {
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "android"))]
+    if let (Some(session), Ok(id)) = (sessions::get_session_by_session_id(&session_id), flow_id.parse::<u64>()) {
+        return match action.as_str() {
+            "relay" => session.native_waiting.relay(id),
+            "cancel" => session.native_waiting.cancel_flow(id),
+            _ => false,
+        };
+    }
+    false
+}

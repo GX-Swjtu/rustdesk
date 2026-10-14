@@ -481,7 +481,12 @@ impl Client {
 
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "android"))]
         if !interface.is_force_relay() {
-            match native_p2p::connect(peer, &rendezvous_server, key, interface.get_lch()).await {
+            let result = if let Some(scope) = interface.native_scope() {
+                native_p2p::connect_graphical(peer, &rendezvous_server, key, &interface, scope).await
+            } else {
+                native_p2p::connect(peer, &rendezvous_server, key, interface.get_lch()).await
+            };
+            match result {
                 Ok(Some(connection)) => return Ok((connection, (0, rendezvous_server), true)),
                 Ok(None) => {},
                 Err(error) if error.is::<crate::native_p2p::Cancelled>() => return Err(error),
@@ -4905,6 +4910,9 @@ pub trait Interface: Send + Clone + 'static + Sized {
     );
     async fn handle_test_delay(&self, t: TestDelay, peer: &mut Stream);
 
+    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "android"))]
+    fn native_scope(&self) -> Option<crate::native_p2p::waiting::Scope> { None }
+
     fn get_lch(&self) -> Arc<RwLock<LoginConfigHandler>>;
 
     fn get_id(&self) -> String {
@@ -4940,6 +4948,8 @@ pub trait Interface: Send + Clone + 'static + Sized {
     }
 
     fn on_establish_connection_error(&self, err: String) {
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "android"))]
+        if err == crate::native_p2p::Cancelled.to_string() { return; }
         let title = "Connection Error";
         let text = err.to_string();
         let lch = self.get_lch();

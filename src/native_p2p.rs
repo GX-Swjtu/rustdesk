@@ -13,7 +13,7 @@ use hbb_common::{
     tokio::{
         self,
         sync::{OwnedSemaphorePermit, Semaphore},
-        time::{timeout_at, Instant},
+        time::Instant,
     },
     tokio_util::sync::CancellationToken,
 };
@@ -21,10 +21,11 @@ use std::sync::{Arc, Mutex, RwLock};
 
 #[cfg(any(target_os = "android", test))]
 pub(crate) mod android;
+pub(crate) mod waiting;
 
 hbb_common::lazy_static::lazy_static! {
     static ref ATTEMPT: Arc<Semaphore> = Arc::new(Semaphore::new(1));
-    static ref PENDING: Mutex<Option<(usize, CancellationToken)>> = Mutex::new(None);
+    static ref PENDING: Mutex<std::collections::HashMap<usize, (usize, CancellationToken)>> = Mutex::new(Default::default());
 }
 
 #[derive(Debug)]
@@ -37,28 +38,26 @@ impl std::fmt::Display for Cancelled {
 }
 impl std::error::Error for Cancelled {}
 
-pub(crate) struct Pending(pub CancellationToken);
-
+pub(crate) struct Pending(pub CancellationToken, usize);
 impl Pending {
     pub fn new(lc: &Arc<RwLock<crate::client::LoginConfigHandler>>) -> Self {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let token = CancellationToken::new();
-        *PENDING.lock().unwrap() = Some((Arc::as_ptr(lc) as usize, token.clone()));
-        Self(token)
+        PENDING.lock().unwrap().insert(id, (Arc::as_ptr(lc) as usize, token.clone()));
+        Self(token, id)
     }
 }
-
 impl Drop for Pending {
-    fn drop(&mut self) {
-        PENDING.lock().unwrap().take();
+    fn drop(&mut self) { PENDING.lock().unwrap().remove(&self.1); }
+}
+pub(crate) fn cancel(lc: &Arc<RwLock<crate::client::LoginConfigHandler>>) {
+    for (id, token) in PENDING.lock().unwrap().values() {
+        if *id == Arc::as_ptr(lc) as usize { token.cancel(); }
     }
 }
-
-pub(crate) fn cancel(lc: &Arc<RwLock<crate::client::LoginConfigHandler>>) {
-    if let Some((id, token)) = PENDING.lock().unwrap().as_ref() {
-        if *id == Arc::as_ptr(lc) as usize {
-            token.cancel();
-        }
-    }
+pub(crate) async fn acquire() -> Option<OwnedSemaphorePermit> {
+    ATTEMPT.clone().acquire_owned().await.ok()
 }
 
 pub(crate) fn enabled() -> bool {
@@ -136,30 +135,36 @@ async fn accept(
     let key =
         crate::get_rs_pk(&crate::get_key(true).await).context("native server key unavailable")?;
     let invite: Invite = protocol::decode(&message.payload, &key)?;
-    let session = Session::join(endpoint, identity()?, key, invite).await?;
+    let mut session = Session::join(endpoint, identity()?, key, invite).await?;
     #[cfg(not(target_os = "android"))]
-    let mut punched = session.punch(p2p::STUN_SERVER).await?;
+    let interfaces = p2p::interfaces::physical().unwrap_or_default();
     #[cfg(target_os = "android")]
     let environment = android::environment().context("Android native P2P environment unavailable")?;
     #[cfg(target_os = "android")]
-    let mut punched = environment.run(session.punch_on(p2p::STUN_SERVER, &environment.interfaces)).await?;
-    let deadline = punched.session.deadline;
-    let peer = punched.peer;
-    let accept = timeout_at(
-        deadline,
-        crate::kcp_stream::KcpStream::accept(
-            punched.socket.clone(),
-            deadline.saturating_duration_since(Instant::now()),
-            None,
-        ),
-    );
-    #[cfg(not(target_os = "android"))]
-    let (kcp, stream) = accept.await??;
-    #[cfg(target_os = "android")]
-    let (kcp, stream) = environment.run(async { Ok(accept.await??) }).await?;
+    let interfaces = environment.interfaces.clone();
+    let accepted = async {
+        let (socket, peer, _) = tokio::select! {
+            result = session.probe(p2p::STUN_SERVER, &interfaces, None) => result?,
+            _ = async { while enabled() { tokio::time::sleep(std::time::Duration::from_millis(250)).await; } } => return Err(Cancelled.into()),
+        };
+        let deadline = session.deadline;
+        let cancellation = async {
+            tokio::select! {
+                _ = session.wait_for_cancellation() => {},
+                _ = async { while enabled() { tokio::time::sleep(std::time::Duration::from_millis(250)).await; } } => {},
+            }
+        };
+        let (kcp, stream) = crate::kcp_stream::KcpStream::native(socket,
+            deadline.saturating_duration_since(Instant::now()), true, cancellation).await?;
+        Ok::<_, hbb_common::anyhow::Error>((kcp, stream, peer))
+    }.await;
+    let (kcp, stream, peer) = match accepted {
+        Ok(result) => result,
+        Err(error) => { session.close().await; return Err(error); }
+    };
     log::info!("native-p2p KCP accepted from {peer}");
-    punched.session.handoff_to_caller();
-    drop(punched);
+    session.handoff_to_caller();
+    drop(session);
     drop(slot);
     // Preserve the existing identity, password/confirmation, whitelist and permission checks.
     let result = crate::server::create_tcp_connection(
@@ -170,6 +175,6 @@ async fn accept(
         crate::server::ConnectionMeta::default(),
     )
     .await;
-    drop(kcp);
+    kcp.close_native().await;
     result
 }

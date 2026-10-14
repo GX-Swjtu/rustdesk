@@ -121,9 +121,10 @@ pub async fn listen(
                 let mut forward = Framed::new(forward, BytesCodec::new());
                 let mut close_port_forward = false;
                 match connect_and_login(&id, &password, &mut ui_receiver, interface.clone(), &mut forward, key, token, is_rdp, &mut close_port_forward, &remote_host, remote_port).await {
-                    Ok(Some(stream)) => {
+                    Ok(Some((stream, kcp))) => {
                         let interface = interface.clone();
                         tokio::spawn(async move {
+                            let _kcp = kcp;
                             if let Err(err) = run_forward(forward, stream).await {
                                 interface.msgbox("error", "Error", &err.to_string(), "");
                             }
@@ -168,7 +169,7 @@ async fn connect_and_login(
     close_port_forward: &mut bool,
     remote_host: &str,
     remote_port: i32,
-) -> ResultType<Option<Stream>> {
+) -> ResultType<Option<(Stream, Option<crate::kcp_stream::KcpStream>)>> {
     let conn_type = if is_rdp {
         ConnType::RDP
     } else {
@@ -259,7 +260,7 @@ async fn connect_and_login(
     if !buffer.is_empty() {
         allow_err!(stream.send_bytes(buffer.into()).await);
     }
-    Ok(Some(stream))
+    Ok(Some((stream, _kcp)))
 }
 
 
@@ -362,7 +363,7 @@ async fn establish_tunnel(
     let mut close_port_forward = false;
     match connect_and_login_mux(id, password, ui_receiver, interface.clone(), &mut forward, key, token, is_rdp, &mut close_port_forward, remote_host, remote_port).await {
         Ok(Some(outcome)) if outcome.mux => {
-            let handle = tunnel.set_muxed(outcome.stream, interface.clone());
+            let handle = tunnel.set_muxed_owned(outcome.stream, interface.clone(), outcome.kcp);
             if !outcome.local_eof {
                 let (socket, prebuf) = take_socket(forward, outcome.prebuf);
                 if let Err(e) = handle.open(remote_host, remote_port, socket, prebuf) {
@@ -504,6 +505,7 @@ async fn connect_and_login_mux(
     }
     Ok(Some(LoginOutcome {
         stream,
+        kcp: _kcp,
         mux,
         prebuf: buffer,
         local_eof,
@@ -520,6 +522,7 @@ fn run_legacy(
     let mut stream = outcome.stream;
     let prebuf = outcome.prebuf;
     tokio::spawn(async move {
+        let _kcp = outcome.kcp;
         stream.set_raw();
         if !prebuf.is_empty() {
             allow_err!(stream.send_bytes(prebuf.into()).await);
@@ -533,6 +536,7 @@ fn run_legacy(
 
 struct LoginOutcome {
     stream: Stream,
+    kcp: Option<crate::kcp_stream::KcpStream>,
     mux: bool,
     prebuf: Vec<u8>,
     local_eof: bool,

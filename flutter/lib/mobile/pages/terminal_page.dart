@@ -1,3 +1,4 @@
+import 'package:flutter_hbb/common/native_p2p_dialog.dart';
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
@@ -191,7 +192,7 @@ class _TerminalPageState extends State<TerminalPage>
     // Initialize terminal connection
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _ffi.dialogManager
-          .showLoading(translate('Connecting...'), onCancel: closeConnection);
+          .showConnectionWaiting(_ffi.sessionId, onCancel: closeConnection);
 
       if (_showTerminalExtraKeys) {
         _updateKeyboardHeight();

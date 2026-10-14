@@ -1,3 +1,4 @@
+import 'package:flutter_hbb/common/native_p2p_dialog.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
@@ -104,6 +105,7 @@ class CachedPeerData {
 }
 
 class FfiModel with ChangeNotifier {
+  final nativeP2pFlows = ValueNotifier<Set<String>>({});
   CachedPeerData cachedPeerData = CachedPeerData();
   PeerInfo _pi = PeerInfo();
   int? lastUserDisplay;
@@ -886,6 +888,17 @@ class FfiModel with ChangeNotifier {
     final title = evt['title'];
     final text = evt['text'];
     final link = evt['link'];
+    if (type == 'native-p2p' || type == 'native-p2p-end') {
+      final active = {...nativeP2pFlows.value};
+      if (type == 'native-p2p') { active.add(text as String); }
+      else { active.remove(text); }
+      nativeP2pFlows.value = active;
+      // The original login/ready/error flow dismisses the connection dialog.
+      // Keep its neutral loading state while a chosen relay is being established.
+      return;
+    }
+    // Progress snapshots never reopen a dismissed dialog over authentication UI.
+    dialogManager.dismissByTag(nativeP2pDialogTag(sessionId));
 
     // The peer-gone detector reconnects under `restarting-show` rather than an error title, so
     // it needs naming here too. By its own title, not the type: an explicitly restarted remote
@@ -1115,7 +1128,7 @@ class FfiModel with ChangeNotifier {
     bind.sessionReconnect(sessionId: sessionId, forceRelay: forceRelay);
     clearPermissions();
     dialogManager.dismissAll();
-    dialogManager.showLoading(translate('Connecting...'),
+    dialogManager.showConnectionWaiting(sessionId,
         onCancel: closeConnection);
   }
 

@@ -1,114 +1,257 @@
 use super::*;
-use hbb_common::{
-    native_p2p::{self as p2p, transport::Session},
-    tokio::time::timeout_at,
-};
+use hbb_common::{native_p2p::{self as p2p, transport::Session, progress::{Observer, Progress, report}},
+    tokio::time::timeout_at, tokio_util::sync::CancellationToken};
+use crate::native_p2p::waiting::{self, Choice, Flow, Scope};
 
-pub(super) async fn connect(
-    peer: &str,
-    endpoint: &str,
-    key: &str,
-    lc: Arc<RwLock<LoginConfigHandler>>,
-) -> ResultType<
-    Option<(
-        Stream,
-        bool,
-        Option<Vec<u8>>,
-        Option<KcpStream>,
-        &'static str,
-    )>,
-> {
-    if !crate::native_p2p::enabled() {
-        return Ok(None);
-    }
-    let Some(_slot) = crate::native_p2p::slot() else {
-        return Ok(None);
-    };
+type Connection = (Stream, bool, Option<Vec<u8>>, Option<KcpStream>, &'static str);
+
+/// CLI and diagnostics retain one bounded attempt and legacy fallback.
+pub(super) async fn connect(peer: &str, endpoint: &str, key: &str,
+    lc: Arc<RwLock<LoginConfigHandler>>) -> ResultType<Option<Connection>> {
+    if !crate::native_p2p::enabled() { return Ok(None); }
+    let Some(slot) = crate::native_p2p::slot() else { return Ok(None); };
     let pending = crate::native_p2p::Pending::new(&lc);
-    #[cfg(target_os = "android")]
-    let environment = crate::native_p2p::android::environment()
-        .context("Android native P2P environment unavailable")?;
-    #[cfg(not(target_os = "android"))]
-    let connection = connect_inner(peer, endpoint, key);
-    #[cfg(target_os = "android")]
-    let connection = environment.run(connect_inner(peer, endpoint, key, &environment, _slot));
-    let result = tokio::select! {
-        _ = pending.0.cancelled() => Err(crate::native_p2p::Cancelled.into()),
-        result = connection => result,
-    };
-    #[cfg(target_os = "android")]
-    if pending.0.is_cancelled() { return Err(crate::native_p2p::Cancelled.into()); }
+    let result = round(peer, endpoint, key, slot, &pending.0, None, None).await;
+    if pending.0.is_cancelled() {
+        if let Ok(Some(connection)) = result { dispose(connection).await; }
+        return Err(crate::native_p2p::Cancelled.into());
+    }
     result
 }
 
-async fn connect_inner(
-    peer: &str,
-    endpoint: &str,
-    key: &str,
-    #[cfg(target_os = "android")] environment: &crate::native_p2p::android::Environment,
-    #[cfg(target_os = "android")] slot: hbb_common::tokio::sync::OwnedSemaphorePermit,
-) -> ResultType<
-    Option<(
-        Stream,
-        bool,
-        Option<Vec<u8>>,
-        Option<KcpStream>,
-        &'static str,
-    )>,
-> {
-    let key = if key.is_empty() {
-        crate::get_key(false).await
-    } else {
-        key.to_owned()
+pub(super) async fn connect_graphical(peer: &str, endpoint: &str, key: &str,
+    interface: &impl Interface, scope: Scope) -> ResultType<Option<Connection>> {
+    if !crate::native_p2p::enabled() { return Ok(None); }
+    let flow = scope.window.begin(scope.mapping);
+    interface.msgbox("native-p2p", "", &flow.id.to_string(), "");
+    let result = continuous(peer, endpoint, key, &scope, &flow).await;
+    flow.finish();
+    interface.msgbox("native-p2p-end", "", &flow.id.to_string(), "");
+    if flow.choice() == Choice::Relay {
+        // Session memory only. peer_relay is intentionally not modified/persisted.
+        let lc = interface.get_lch();
+        let mut lc = lc.write().unwrap();
+        lc.force_relay = true;
+        lc.policy_relay = true;
+    }
+    result
+}
+
+async fn continuous(peer: &str, endpoint: &str, key: &str, scope: &Scope, flow: &Arc<Flow>) -> ResultType<Option<Connection>> {
+    drive(scope, flow, |slot, observer| round(peer, endpoint, key, slot, &flow.cancel, observer, Some(flow))).await
+}
+
+async fn drive<F, Fut>(scope: &Scope, flow: &Arc<Flow>, mut attempt_round: F) -> ResultType<Option<Connection>>
+where F: FnMut(hbb_common::tokio::sync::OwnedSemaphorePermit, Observer) -> Fut,
+    Fut: std::future::Future<Output = ResultType<Option<Connection>>> {
+    loop {
+        if flow.choice() != Choice::Pending { return outcome(flow); }
+        flow.stage("slot");
+        let slot = tokio::select! {
+            biased;
+            _ = flow.cancel.cancelled() => return outcome(flow),
+            _ = settings_changed() => { flow.legacy(); return outcome(flow); }
+            slot = crate::native_p2p::acquire() => slot.context("native attempt semaphore closed")?,
+        };
+        let (generation, observer) = flow.start_round();
+        let attempt = attempt_round(slot, observer);
+        tokio::pin!(attempt);
+        let result = tokio::select! {
+            result = &mut attempt => result,
+            _ = settings_changed() => {
+                flow.legacy();
+                // Cooperatively stop, then await explicit cleanup before returning.
+                attempt.await
+            }
+        };
+        if let Ok(Some(connection)) = result {
+            if scope.window.commit_direct(flow) {
+                flow.finish_round("P2P identity verified", false);
+                return Ok(Some(connection));
+            }
+            dispose(connection).await;
+            return outcome(flow);
+        }
+        if flow.choice() != Choice::Pending { return outcome(flow); }
+        let (reason, parked) = match result {
+            Ok(None) => ("The server or peer explicitly declined the native P2P capability".to_owned(), true),
+            Err(error) => { let text = error.to_string(); let terminal = waiting::terminal_reason(&text); (text, terminal) },
+            _ => unreachable!(),
+        };
+        hbb_common::throttled_log!(Duration::from_secs(1), debug, "native-p2p round {generation} ended (waiting_for_choice={parked}): {reason}");
+        flow.finish_round(&reason, parked);
+        tokio::select! {
+            biased;
+            _ = flow.cancel.cancelled() => return outcome(flow),
+            _ = settings_changed() => { flow.legacy(); return outcome(flow); }
+            _ = async { if parked { std::future::pending::<()>().await; } else { tokio::time::sleep(waiting::backoff(generation)).await; } } => {}
+        }
+    }
+}
+
+fn outcome(flow: &Flow) -> ResultType<Option<Connection>> {
+    match flow.choice() {
+        Choice::Relay | Choice::Legacy => Ok(None),
+        _ => Err(crate::native_p2p::Cancelled.into()),
+    }
+}
+async fn settings_changed() {
+    while crate::native_p2p::enabled() { tokio::time::sleep(Duration::from_millis(250)).await; }
+}
+async fn dispose(connection: Connection) {
+    let (stream, _, _, kcp, _) = connection;
+    drop(stream);
+    if let Some(kcp) = kcp { kcp.close_native().await; }
+}
+
+async fn round(peer: &str, endpoint: &str, key: &str,
+    slot: hbb_common::tokio::sync::OwnedSemaphorePermit, cancel: &CancellationToken,
+    observer: Observer, flow: Option<&Flow>) -> ResultType<Option<Connection>> {
+    // Reserve teardown within the absolute 60 second round, including Android withdrawal.
+    let deadline = Instant::now() + Duration::from_secs(p2p::ATTEMPT_SECONDS) - Duration::from_millis(1500);
+    report(&observer, Progress::Stage("prepare"));
+    let key = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(crate::native_p2p::Cancelled.into()),
+        value = timeout_at(deadline, async { if key.is_empty() { crate::get_key(false).await } else { key.to_owned() } }) => value?,
     };
     let server_key = crate::get_rs_pk(&key).context("native server key unavailable")?;
     #[cfg(not(target_os = "android"))]
-    let Some(session) =
-        Session::begin(endpoint, crate::native_p2p::identity()?, server_key, peer).await?
-    else {
-        return Ok(None);
+    let _slot = slot;
+    #[cfg(not(target_os = "android"))]
+    let session = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(crate::native_p2p::Cancelled.into()),
+        session = Session::begin_with_timeout(endpoint, crate::native_p2p::identity()?, server_key, peer, Duration::from_secs(5).min(deadline.saturating_duration_since(Instant::now()))) => session?,
     };
+    #[cfg(not(target_os = "android"))]
+    let Some(mut session) = session else { return Ok(None); };
     #[cfg(target_os = "android")]
-    let Some((session, _registration)) =
-        crate::native_p2p::android::begin(endpoint, server_key, peer, slot).await?
-    else {
-        return Ok(None);
-    };
+    let Some((mut session, mut registration)) = crate::native_p2p::android::begin_controlled(endpoint, server_key, peer, slot, cancel, deadline.saturating_duration_since(Instant::now())).await?
+    else { return Ok(None); };
+    if let Some(flow) = flow { flow.limit(session.deadline.min(deadline + Duration::from_millis(1500))); }
+    session.deadline = session.deadline.min(deadline);
+    let result = connected_round(peer, &key, &server_key, &session, cancel, observer).await;
+    // No new round, relay or slot handoff until local tasks and leases are settled.
+    session.close().await;
+    #[cfg(target_os = "android")]
+    registration.close().await;
+    result.map(Some)
+}
+
+async fn connected_round(peer: &str, key: &str, server_key: &hbb_common::sodiumoxide::crypto::sign::PublicKey,
+    session: &Session, cancel: &CancellationToken, observer: Observer) -> ResultType<Connection> {
     let signed_peer = session.ticket.signed_peer.clone();
-    let (signed_id, _) = crate::decode_id_pk(&signed_peer, &server_key)?;
+    let (signed_id, _) = crate::decode_id_pk(&signed_peer, server_key)?;
     hbb_common::anyhow::ensure!(signed_id == peer, "native target identity mismatch");
     let deadline = session.deadline;
-    timeout_at(deadline, async move {
-        #[cfg(not(target_os = "android"))]
-        let punched = session.punch(p2p::STUN_SERVER).await?;
-        #[cfg(target_os = "android")]
-        let punched = session.punch_on(p2p::STUN_SERVER, &environment.interfaces).await?;
-        // The authenticated native probes already established this socket. The legacy
-        // probe protocol mistakes a late native answer for the first KCP packet.
-        let (kcp, mut stream) = KcpStream::connect(
-            punched.socket.clone(),
-            deadline.saturating_duration_since(Instant::now()),
-        )
-        .await?;
-        let pk = Client::secure_connection(peer, signed_peer, &key, &mut stream).await?;
-        hbb_common::anyhow::ensure!(stream.is_secured(), "native identity handshake failed");
-        log::info!("native-p2p authenticated KCP connected to {}", punched.peer);
-        let session = punched.session;
-        tokio::spawn(async move {
-            #[cfg(target_os = "android")]
-            let _registration = _registration;
-            if let Err(error) = session.confirm_authenticated().await {
-                log::trace!("native-p2p strategy report: {error}");
-            }
-        });
-        Ok(Some((stream, true, pk, Some(kcp), "UDP-native")))
-    })
-    .await?
+    #[cfg(not(target_os = "android"))]
+    let interfaces = p2p::interfaces::physical().unwrap_or_default();
+    #[cfg(target_os = "android")]
+    let environment = crate::native_p2p::android::environment().context("Android native P2P environment unavailable")?;
+    #[cfg(target_os = "android")]
+    let interfaces = environment.interfaces.clone();
+    let (socket, remote, _) = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(crate::native_p2p::Cancelled.into()),
+        result = session.probe(p2p::STUN_SERVER, &interfaces, observer.clone()) => result?,
+    };
+    report(&observer, Progress::Stage("kcp"));
+    let (kcp, mut stream) = KcpStream::native(socket, deadline.saturating_duration_since(Instant::now()), false,
+        async { tokio::select! { _ = cancel.cancelled() => {}, _ = session.wait_for_cancellation() => {} } }).await?;
+    report(&observer, Progress::Stage("secure"));
+    let secured = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err(crate::native_p2p::Cancelled.into()),
+        value = timeout_at(deadline, Client::secure_connection(peer, signed_peer, key, &mut stream)) => match value { Ok(result) => result, Err(error) => Err(error.into()) },
+    };
+    match secured {
+        Ok(pk) if stream.is_secured() => {
+            log::info!("native-p2p authenticated KCP connected to {remote}");
+            if let Err(error) = session.confirm_authenticated().await { log::trace!("native strategy report: {error}"); }
+            report(&observer, Progress::Stage("authenticated"));
+            Ok((stream, true, pk, Some(kcp), "UDP-native"))
+        }
+        result => {
+            drop(stream);
+            kcp.close_native().await;
+            Err(result.err().unwrap_or_else(|| hbb_common::anyhow::anyhow!("native identity handshake failed")))
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn thousand_transient_rounds_retry_with_backoff_and_release_the_slot() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let scope = Scope { window: Default::default(), mapping: None };
+        let flow = scope.window.begin(None);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let socket = tokio::net::TcpStream::connect(address).await.unwrap();
+        let (_peer, _) = listener.accept().await.unwrap();
+        let success = Mutex::new(Some(Stream::Tcp(hbb_common::tcp::FramedStream::from(socket, address))));
+        let count = AtomicUsize::new(0);
+        let times = Mutex::new(Vec::new());
+        let result = drive(&scope, &flow, |slot, observer| {
+            let n = count.fetch_add(1, Ordering::SeqCst);
+            times.lock().unwrap().push(Instant::now());
+            let success = &success;
+            async move {
+                let _slot = slot;
+                report(&observer, Progress::Stage("probe"));
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                if n == 999 { return Ok(Some((success.lock().unwrap().take().unwrap(), true, None, None, "test"))); }
+                Err(hbb_common::anyhow::anyhow!("network timeout; support unknown"))
+            }
+        }).await;
+        assert!(result.unwrap().is_some());
+        assert_eq!(flow.choice(), Choice::Direct);
+        assert!(!scope.window.relay(flow.id));
+        assert_eq!(count.load(Ordering::SeqCst), 1000);
+        let times = times.lock().unwrap();
+        assert_eq!(times[1] - times[0], Duration::from_secs(3));
+        assert_eq!(times[2] - times[1], Duration::from_secs(6));
+        assert_eq!(times[999] - times[998], Duration::from_secs(11));
+        assert!(crate::native_p2p::slot().is_some());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn explicit_unsupported_waits_without_retry_until_cancelled() {
+        let scope = Scope { window: Default::default(), mapping: None };
+        let flow = scope.window.begin(None);
+        let attempts = std::sync::atomic::AtomicUsize::new(0);
+        let drive = drive(&scope, &flow, |slot, _| {
+            attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async move { drop(slot); Ok(None) }
+        });
+        let cancel = async {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+            assert!(crate::native_p2p::slot().is_some());
+            scope.window.cancel_flow(flow.id);
+        };
+        let (result, _) = tokio::join!(drive, cancel);
+        assert!(result.err().unwrap().is::<crate::native_p2p::Cancelled>());
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn hundred_real_kcp_cancellations_release_all_socket_references() {
+        for accept in [false, true] {
+            for _ in 0..50 {
+                let socket = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());
+                let peer = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+                socket.connect(peer.local_addr().unwrap()).await.unwrap();
+                let result = KcpStream::native(socket.clone(), Duration::from_secs(60), accept,
+                    tokio::time::sleep(Duration::from_millis(2))).await;
+                assert!(result.is_err());
+                assert_eq!(Arc::strong_count(&socket), 1, "native KCP pump leaked a socket");
+            }
+        }
+    }
 
     #[tokio::test]
     async fn legacy_policy_skips_native_coordination() {

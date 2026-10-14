@@ -1,3 +1,4 @@
+import 'package:flutter_hbb/common/native_p2p_dialog.dart';
 import 'dart:async';
 import 'dart:ui' as ui;
 
@@ -97,7 +98,7 @@ class _ViewCameraPageState extends State<ViewCameraPage>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual, overlays: []);
       gFFI.dialogManager
-          .showLoading(translate('Connecting...'), onCancel: closeConnection);
+          .showConnectionWaiting(gFFI.sessionId, onCancel: closeConnection);
     });
     WakelockManager.enable(_uniqueKey);
     _physicalFocusNode.requestFocus();

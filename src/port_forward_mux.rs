@@ -479,7 +479,12 @@ mod tunnel {
             }
         }
 
-        pub fn set_muxed(&self, mut stream: Stream, interface: impl Interface) -> Arc<TunnelHandle> {
+        pub fn set_muxed(&self, stream: Stream, interface: impl Interface) -> Arc<TunnelHandle> {
+            self.set_muxed_owned(stream, interface, None)
+        }
+
+        pub fn set_muxed_owned(&self, mut stream: Stream, interface: impl Interface,
+            kcp: Option<crate::kcp_stream::KcpStream>) -> Arc<TunnelHandle> {
             cap_packet_size(&mut stream);
             let (data_tx, data_rx) = mpsc::channel(DATA_QUEUE_FRAMES);
             let (control_tx, control_rx) = mpsc::unbounded_channel();
@@ -495,15 +500,12 @@ mod tunnel {
             // state, a later publish here would pin it at Muxed with a dead
             // handle and the listener could never re-establish.
             self.state.send_replace(TunnelState::Muxed(handle.clone()));
-            tokio::spawn(tunnel_loop(
-                stream,
-                handle.clone(),
-                data_rx,
-                control_rx,
-                interface,
-                state,
-                self.lifetime.subscribe(),
-            ));
+            let lifetime = self.lifetime.subscribe();
+            let task_handle = handle.clone();
+            tokio::spawn(async move {
+                let _kcp = kcp;
+                tunnel_loop(stream, task_handle, data_rx, control_rx, interface, state, lifetime).await;
+            });
             handle
         }
 

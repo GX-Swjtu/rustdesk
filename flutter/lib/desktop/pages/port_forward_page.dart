@@ -1,3 +1,4 @@
+import 'package:flutter_hbb/common/native_p2p_dialog.dart';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -109,6 +110,11 @@ class _PortForwardPageState extends State<PortForwardPage>
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 buildPrompt(context),
+                ValueListenableBuilder<Set<String>>(
+                  valueListenable: _ffi.ffiModel.nativeP2pFlows,
+                  builder: (_, flows, __) => flows.isEmpty ? const SizedBox.shrink()
+                      : nativeP2pPanel(_ffi.sessionId, embedded: true),
+                ),
                 Flexible(
                   child: Container(
                     decoration: BoxDecoration(

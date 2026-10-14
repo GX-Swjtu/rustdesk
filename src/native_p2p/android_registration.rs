@@ -43,23 +43,42 @@ fn advertisement(identity: &p2p::transport::Identity, enabled: bool) -> Result<V
 }
 
 pub(crate) async fn begin(
-    endpoint: &str,
-    server_key: sign::PublicKey,
-    peer: &str,
-    slot: OwnedSemaphorePermit,
+    endpoint: &str, server_key: sign::PublicKey, peer: &str, slot: OwnedSemaphorePermit,
 ) -> Result<Option<(Session, Registration)>> {
-    let deadline = Instant::now() + Duration::from_secs(p2p::ATTEMPT_SECONDS);
-    let limit = Duration::from_secs(5);
-    timeout(limit, async {
-        let registration = prepare(endpoint, slot).await?;
-        let Some(mut session) = Session::begin_with_timeout(endpoint, registration.identity.clone(), server_key, peer, limit).await?
-        else { return Ok(None); };
-        session.deadline = session.deadline.min(deadline);
-        Ok(Some((session, registration)))
-    }).await?
+    begin_controlled(endpoint, server_key, peer, slot, &CancellationToken::new(), Duration::from_secs(5)).await
 }
 
-async fn prepare(endpoint: &str, slot: OwnedSemaphorePermit) -> Result<Registration> {
+pub(crate) async fn begin_controlled(
+    endpoint: &str, server_key: sign::PublicKey, peer: &str, slot: OwnedSemaphorePermit,
+    cancel: &CancellationToken, budget: Duration,
+) -> Result<Option<(Session, Registration)>> {
+    let deadline = Instant::now() + Duration::from_secs(p2p::ATTEMPT_SECONDS);
+    let preparation = Instant::now() + budget.min(Duration::from_secs(5));
+    let mut registration = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(super::super::Cancelled.into()),
+        result = tokio::time::timeout_at(preparation, create(endpoint, slot)) => result??,
+    };
+    // Keep the lease outside the cancellable future so withdrawal is awaited.
+    let result = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err(super::super::Cancelled.into()),
+        result = tokio::time::timeout_at(preparation, async {
+            register(&registration).await?;
+            Session::begin_with_timeout(endpoint, registration.identity.clone(), server_key, peer,
+                preparation.saturating_duration_since(Instant::now())).await
+        }) => match result { Ok(result) => result, Err(error) => Err(error.into()) },
+    };
+    match result {
+        Ok(Some(mut session)) => {
+            session.deadline = session.deadline.min(deadline);
+            Ok(Some((session, registration)))
+        }
+        result => { registration.close().await; result.map(|_| None) }
+    }
+}
+
+async fn create(endpoint: &str, slot: OwnedSemaphorePermit) -> Result<Registration> {
     let identity = super::super::identity()?;
     if active(endpoint) {
         return Ok(Registration { socket: None, endpoint: endpoint.into(), identity, slot: Some(slot) });
@@ -68,7 +87,18 @@ async fn prepare(endpoint: &str, slot: OwnedSemaphorePermit) -> Result<Registrat
         .find(std::net::SocketAddr::is_ipv4).context("no IPv4 coordinator")?;
     let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
     socket.connect(address).await?;
-    let lease = Registration { socket: Some(socket.clone()), endpoint: endpoint.into(), identity, slot: Some(slot) };
+    Ok(Registration { socket: Some(socket), endpoint: endpoint.into(), identity, slot: Some(slot) })
+}
+
+#[cfg(test)]
+async fn prepare(endpoint: &str, slot: OwnedSemaphorePermit) -> Result<Registration> {
+    let mut lease = create(endpoint, slot).await?;
+    if let Err(error) = register(&lease).await { lease.close().await; return Err(error); }
+    Ok(lease)
+}
+
+async fn register(lease: &Registration) -> Result<()> {
+    let Some(socket) = &lease.socket else { return Ok(()); };
     socket.send(&advertisement(&lease.identity, true)?).await?;
     let mut data = [0u8; 4096];
     let n = socket.recv(&mut data).await?;
@@ -94,7 +124,29 @@ async fn prepare(endpoint: &str, slot: OwnedSemaphorePermit) -> Result<Registrat
         hbb_common::anyhow::ensure!(matches!(reply.union,
             Some(rendezvous_message::Union::RegisterPeerResponse(r)) if !r.request_pk), "Android native capability registration declined");
     }
-    Ok(lease)
+    Ok(())
+}
+
+impl Registration {
+    pub async fn close(&mut self) {
+        if let Some(socket) = self.socket.take() {
+            refresh_registration();
+            if !active(&self.endpoint) {
+                let result = timeout(Duration::from_millis(500), async {
+                    socket.send(&advertisement(&self.identity, false)?).await?;
+                    let mut data = [0u8; 4096];
+                    loop {
+                        let n = socket.recv(&mut data).await?;
+                        let reply = RendezvousMessage::parse_from_bytes(&data[..n])?;
+                        if matches!(reply.union, Some(rendezvous_message::Union::RegisterPeerResponse(_))) { break; }
+                    }
+                    Ok::<_, hbb_common::anyhow::Error>(())
+                }).await;
+                if !matches!(result, Ok(Ok(()))) { log::trace!("Android native withdrawal unavailable"); }
+            }
+        }
+        self.slot.take();
+    }
 }
 
 impl Drop for Registration {
@@ -184,7 +236,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn registration_and_capability_share_five_second_preparation_budget() {
+    async fn registration_and_capability_share_five_seconds_then_await_bounded_cleanup() {
         for delay_ms in [1500, 5500] {
             let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = tcp.local_addr().unwrap();
@@ -210,7 +262,7 @@ mod tests {
             let result = begin(&address.to_string(), key, "legacy-peer", permits.clone().acquire_owned().await.unwrap()).await;
             assert!(result.is_err());
             assert!(started.elapsed() >= Duration::from_secs(5), "unknown server still has a shorter preparation budget");
-            assert!(started.elapsed() < Duration::from_millis(5500), "registration delay {delay_ms} extended the shared preparation budget");
+            assert!(started.elapsed() < Duration::from_secs(6), "registration delay {delay_ms} exceeded preparation plus bounded cleanup");
             // Cleanup must release the attempt slot even when registration times out.
             drop(timeout(Duration::from_secs(2), permits.acquire_owned()).await.unwrap().unwrap());
             timeout(Duration::from_secs(2), udp_task).await.unwrap().unwrap();

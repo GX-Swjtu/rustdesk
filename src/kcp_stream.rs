@@ -18,6 +18,18 @@ pub struct KcpStream {
     endpoint: KcpEndpoint,
     conn_id: ConnId,
     stop_sender: Option<oneshot::Sender<()>>,
+    native_io: Option<NativeIo>,
+}
+
+// A native round joins its pump before retry/relay. Drop is only a safety net.
+struct NativeIo(Option<tokio::task::JoinHandle<()>>);
+impl Drop for NativeIo {
+    fn drop(&mut self) { if let Some(task) = &self.0 { task.abort(); } }
+}
+impl NativeIo {
+    async fn stop(&mut self) {
+        if let Some(task) = self.0.take() { task.abort(); let _ = task.await; }
+    }
 }
 
 const KCP_IO_ERR_LOG_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
@@ -89,6 +101,7 @@ impl KcpStream {
                     endpoint,
                     conn_id,
                     stop_sender: Some(stop_sender),
+                    native_io: None,
                 },
                 Self::create_framed(stream, udp_socket.local_addr().ok()),
             ))
@@ -121,6 +134,7 @@ impl KcpStream {
                     endpoint,
                     conn_id,
                     stop_sender: Some(stop_sender),
+                    native_io: None,
                 },
                 Self::create_framed(stream, udp_socket.local_addr().ok()),
             ))
@@ -129,12 +143,49 @@ impl KcpStream {
         }
     }
 
+    /// The same KCP protocol with explicit cancellation and pump ownership.
+    pub async fn native(
+        socket: Arc<UdpSocket>, limit: std::time::Duration, accept: bool,
+        cancelled: impl std::future::Future<Output = ()>,
+    ) -> ResultType<(Self, Stream)> {
+        let mut endpoint = KcpEndpoint::new();
+        Self::apply_kcp_config(&mut endpoint);
+        endpoint.run().await;
+        let output = endpoint.output_receiver().ok_or_else(|| anyhow::anyhow!("Missing KCP output"))?;
+        let (stop_sender, stop_receiver) = oneshot::channel();
+        let mut io = NativeIo(Some(Self::kcp_io(socket.clone(), endpoint.input_sender(), output, stop_receiver).await));
+        let result: ResultType<_> = tokio::select! {
+            biased;
+            _ = cancelled => Err(anyhow::anyhow!("native KCP cancelled")),
+            result = tokio::time::timeout(limit, async {
+                if accept { endpoint.accept().await }
+                else { endpoint.connect(limit, 0, 0, Bytes::new()).await }
+            }) => match result { Ok(result) => result.map_err(Into::into), Err(error) => Err(error.into()) },
+        };
+        match result {
+            Ok(conn_id) => {
+                if let Some(stream) = stream::KcpStream::new(&endpoint, conn_id) {
+                    return Ok((Self { endpoint, conn_id, stop_sender: Some(stop_sender), native_io: Some(io) },
+                        Self::create_framed(stream, socket.local_addr().ok())));
+                }
+                io.stop().await;
+                Err(anyhow::anyhow!("Failed to create native KCP stream"))
+            }
+            Err(error) => { io.stop().await; Err(error) }
+        }
+    }
+
+    pub async fn close_native(mut self) {
+        if let Some(sender) = self.stop_sender.take() { let _ = sender.send(()); }
+        if let Some(io) = self.native_io.as_mut() { io.stop().await; }
+    }
+
     async fn kcp_io(
         udp_socket: Arc<UdpSocket>,
         input: mpsc::Sender<KcpPacket>,
         mut output: mpsc::Receiver<KcpPacket>,
         mut stop_receiver: oneshot::Receiver<()>,
-    ) {
+    ) -> tokio::task::JoinHandle<()> {
         let udp = udp_socket.clone();
         tokio::spawn(async move {
             let mut buf = vec![0; 1500];
@@ -180,7 +231,7 @@ impl KcpStream {
                     }
                 }
             }
-        });
+        })
     }
 }
 

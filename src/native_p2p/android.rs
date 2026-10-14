@@ -9,7 +9,7 @@ mod registration;
 #[path = "android_interfaces.rs"]
 mod interfaces;
 #[cfg(target_os = "android")]
-pub(crate) use registration::{begin, record as record_registration};
+pub(crate) use registration::{begin_controlled, record as record_registration};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
