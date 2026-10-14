@@ -194,12 +194,13 @@ emitted by pktmon, and retains the physical source addresses and per-minute
 counts. Endpoint capture began during home cold trial 3; the server capture
 covers all final cold trials. Endpoint clocks are not precisely synchronised.
 
-The school capture stopped and its temporary filter was removed. Server
-tcpdump also exited. The home capture was converted read-only to
-`home-checkpoint.pcapng`, covering 03:07:36–04:03:19 and the full accepted soak;
-its stop/export invocation returned a cancelled UAC elevation. Home pktmon
-cleanup remains an explicit administrator follow-up, separate from passed
-transport acceptance. The task's stop script removes only its named filter.
+Both endpoint captures stopped and their temporary filters were removed;
+server tcpdump also exited. After the first home stop invocation returned a
+cancelled UAC elevation, the user requested another invocation and approved it.
+Home cleanup completed at 08:10:38. `home-udp.pcapng` covers 03:07:36–08:10:29,
+including all 32 accepted-soak minute buckets; `home-checkpoint.pcapng` is also
+preserved. The stop script removed the task's named filter and confirmed pktmon
+idle with no filters. RustDesk remained running and Mihomo TUN remained up.
 
 ## Rollback and remaining coverage
 
