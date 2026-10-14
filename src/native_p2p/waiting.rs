@@ -69,7 +69,7 @@ pub fn backoff(round: u64) -> Duration {
 
 /// Unknown transport failures are retryable. Only explicit evidence stops probes.
 pub fn terminal_reason(error: &str) -> bool {
-    if let Some(reason) = Reason::decode(error) { return reason.code == "no_strategy"; }
+    if let Some(reason) = Reason::decode(error) { return matches!(reason.code.as_str(), "no_strategy" | "unsupported"); }
     let error = error.to_ascii_lowercase();
     ["no supported native udp nat combination", "no eligible wan strategy", "no applicable strategy",
         "prediction lacks evidence", "coordinator unsupported", "unsupported native version",
@@ -118,6 +118,14 @@ impl Context {
         flow.choose(Choice::Direct)
     }
 
+    pub fn finish(&self, flow: &Flow) -> Choice {
+        // Serialize handoff with window/mapping cancellation after round cleanup.
+        let _window = self.0.lock().unwrap();
+        let mut state = flow.inner.lock().unwrap();
+        state.snapshot.active = false;
+        state.choice
+    }
+
     pub fn cancel_flow(&self, id: u64) -> bool {
         self.0.lock().unwrap().flows.get(&id).is_some_and(|flow| flow.choose(Choice::Cancel))
     }
@@ -161,7 +169,8 @@ impl Flow {
     pub fn choice(&self) -> Choice { self.inner.lock().unwrap().choice }
     fn choose(&self, choice: Choice) -> bool {
         let mut state = self.inner.lock().unwrap();
-        if state.choice != Choice::Pending { return false; }
+        let stop_fallback = choice == Choice::Cancel && matches!(state.choice, Choice::Relay | Choice::Legacy);
+        if !state.snapshot.active || (state.choice != Choice::Pending && !stop_fallback) { return false; }
         state.choice = choice;
         let generation = state.snapshot.round;
         bounded_push(&mut state.snapshot.events, json!({"ms": self.started.elapsed().as_millis() as u64,
@@ -224,7 +233,6 @@ impl Flow {
             state.retry_at = if parked { None } else { Some(Instant::now() + backoff(state.snapshot.round)) };
         }
     }
-    pub fn finish(&self) { self.inner.lock().unwrap().snapshot.active = false; }
     pub fn snapshot(&self) -> Snapshot {
         let state = self.inner.lock().unwrap();
         let mut snapshot = state.snapshot.clone();
@@ -315,6 +323,7 @@ mod tests {
                 }
                 assert!(!window.relay(flow.id));
                 assert!(!window.commit_direct(&flow));
+                assert_eq!(window.finish(&flow), first);
                 assert!(!window.cancel_flow(flow.id));
                 assert_eq!(flow.choice(), first);
             }

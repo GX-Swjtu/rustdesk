@@ -25,9 +25,10 @@ pub(super) async fn connect_graphical(peer: &str, endpoint: &str, key: &str,
     let flow = scope.window.begin(scope.mapping);
     interface.msgbox("native-p2p", "", &flow.id.to_string(), "");
     let result = continuous(peer, endpoint, key, &scope, &flow).await;
-    flow.finish();
+    let choice = scope.window.finish(&flow);
     interface.msgbox("native-p2p-end", "", &flow.id.to_string(), "");
-    if flow.choice() == Choice::Relay {
+    if choice == Choice::Cancel { return Err(crate::native_p2p::Cancelled.into()); }
+    if choice == Choice::Relay {
         // Session memory only. peer_relay is intentionally not modified/persisted.
         let lc = interface.get_lch();
         let mut lc = lc.write().unwrap();
@@ -74,7 +75,8 @@ where F: FnMut(hbb_common::tokio::sync::OwnedSemaphorePermit, Observer) -> Fut,
         }
         if flow.choice() != Choice::Pending { return outcome(flow); }
         let (reason, parked) = match result {
-            Ok(None) => ("The server or peer explicitly declined the native P2P capability".to_owned(), true),
+            // Older coordinators also use Unsupported for offline/unregistered peers.
+            Ok(None) => ("Peer P2P capability is unknown; waiting for registration".to_owned(), false),
             Err(error) => { let text = error.to_string(); let terminal = waiting::terminal_reason(&text); (text, terminal) },
             _ => unreachable!(),
         };
@@ -185,7 +187,40 @@ mod tests {
     use super::*;
 
     #[tokio::test(start_paused = true)]
-    async fn thousand_transient_rounds_retry_with_backoff_and_release_the_slot() {
+    async fn closing_during_relay_cleanup_does_not_start_fallback() {
+        for (remove_mapping, after_cleanup) in [(false, false), (true, false), (false, true), (true, true)] {
+            let window = Arc::new(waiting::Context::default());
+            let scope = Scope { mapping: Some(window.mapping(12345)), window };
+            let flow = scope.window.begin(scope.mapping);
+            let stop = || {
+                if remove_mapping { scope.window.cancel_mapping(12345); }
+                else { scope.window.close(); }
+            };
+            let attempt = drive(&scope, &flow, |slot, _| async {
+                let _slot = slot;
+                flow.cancel.cancelled().await;
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                Err(crate::native_p2p::Cancelled.into())
+            });
+            let close = async {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                assert!(scope.window.relay(flow.id));
+                if !after_cleanup { stop(); }
+            };
+            let (result, _) = tokio::join!(attempt, close);
+            if after_cleanup {
+                assert!(result.unwrap().is_none());
+                stop();
+            } else {
+                assert!(result.err().is_some_and(|e| e.is::<crate::native_p2p::Cancelled>()));
+            }
+            assert_eq!(scope.window.finish(&flow), Choice::Cancel);
+            assert!(crate::native_p2p::slot().is_some());
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unknown_capability_and_transient_rounds_retry_and_release_the_slot() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let scope = Scope { window: Default::default(), mapping: None };
         let flow = scope.window.begin(None);
@@ -205,6 +240,7 @@ mod tests {
                 report(&observer, Progress::Stage("probe"));
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 if n == 999 { return Ok(Some((success.lock().unwrap().take().unwrap(), true, None, None, "test"))); }
+                if n == 0 { return Ok(None); }
                 Err(hbb_common::anyhow::anyhow!("network timeout; support unknown"))
             }
         }).await;
@@ -226,7 +262,11 @@ mod tests {
         let attempts = std::sync::atomic::AtomicUsize::new(0);
         let drive = drive(&scope, &flow, |slot, _| {
             attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            async move { drop(slot); Ok(None) }
+            async move {
+                drop(slot);
+                Err(hbb_common::anyhow::anyhow!(p2p::progress::Reason { code: "unsupported".into(),
+                    message: "Native P2P is disabled on the peer".into(), local: None, peer: None }.encode()))
+            }
         });
         let cancel = async {
             tokio::time::sleep(Duration::from_secs(3600)).await;
