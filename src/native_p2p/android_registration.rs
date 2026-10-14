@@ -6,7 +6,6 @@ use tokio::{net::UdpSocket, time::timeout};
 
 hbb_common::lazy_static::lazy_static! {
     static ref REGISTRATIONS: Mutex<HashMap<String, Instant>> = Mutex::new(HashMap::new());
-    static ref CONFIRMED_SERVER: Mutex<Option<(String, sign::PublicKey)>> = Mutex::new(None);
 }
 
 pub(crate) fn record(endpoint: &str, registration: &RendezvousMessage) {
@@ -50,21 +49,14 @@ pub(crate) async fn begin(
     slot: OwnedSemaphorePermit,
 ) -> Result<Option<(Session, Registration)>> {
     let deadline = Instant::now() + Duration::from_secs(p2p::ATTEMPT_SECONDS);
-    // Consume the previous proof so failure or cancellation also forgets stale support.
-    let confirmed = CONFIRMED_SERVER.lock().unwrap().take()
-        .is_some_and(|(address, key)| address == endpoint && key == server_key);
-    let limit = Duration::from_secs(if confirmed { 5 } else { 1 });
-    let result = timeout(limit, async {
+    let limit = Duration::from_secs(5);
+    timeout(limit, async {
         let registration = prepare(endpoint, slot).await?;
         let Some(mut session) = Session::begin_with_timeout(endpoint, registration.identity.clone(), server_key, peer, limit).await?
         else { return Ok(None); };
         session.deadline = session.deadline.min(deadline);
         Ok(Some((session, registration)))
-    }).await?;
-    if matches!(&result, Ok(Some(_))) {
-        *CONFIRMED_SERVER.lock().unwrap() = Some((endpoint.into(), server_key));
-    }
-    result
+    }).await?
 }
 
 async fn prepare(endpoint: &str, slot: OwnedSemaphorePermit) -> Result<Registration> {
@@ -192,8 +184,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn registration_and_capability_share_one_second_compatibility_budget() {
-        for delay_ms in [600, 1500] {
+    async fn registration_and_capability_share_five_second_preparation_budget() {
+        for delay_ms in [1500, 5500] {
             let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = tcp.local_addr().unwrap();
             let udp = UdpSocket::bind(address).await.unwrap();
@@ -217,7 +209,8 @@ mod tests {
             let started = Instant::now();
             let result = begin(&address.to_string(), key, "legacy-peer", permits.clone().acquire_owned().await.unwrap()).await;
             assert!(result.is_err());
-            assert!(started.elapsed() < Duration::from_millis(1300), "registration delay {delay_ms} extended the compatibility wait");
+            assert!(started.elapsed() >= Duration::from_secs(5), "unknown server still has a shorter preparation budget");
+            assert!(started.elapsed() < Duration::from_millis(5500), "registration delay {delay_ms} extended the shared preparation budget");
             // Cleanup must release the attempt slot even when registration times out.
             drop(timeout(Duration::from_secs(2), permits.acquire_owned()).await.unwrap().unwrap());
             timeout(Duration::from_secs(2), udp_task).await.unwrap().unwrap();
@@ -227,9 +220,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn only_authenticated_server_gets_longer_preparation_budget() {
+    async fn first_connection_accepts_delayed_authenticated_server() {
         use hbb_common::{bytes_codec::BytesCodec, futures::{SinkExt, StreamExt}, tokio_util::codec::Framed};
-        use std::sync::atomic::{AtomicU64, Ordering};
         let device_key = super::super::super::identity().unwrap().key.public_key();
         let (server_key, secret) = sign::gen_keypair();
         let wrong_key = sign::gen_keypair().0;
@@ -237,8 +229,6 @@ mod tests {
         let address = tcp.local_addr().unwrap();
         let identity = super::super::super::identity().unwrap();
         record(&address.to_string(), &RendezvousMessage::parse_from_bytes(&advertisement(&identity, true).unwrap()).unwrap());
-        let delay = Arc::new(AtomicU64::new(0));
-        let tcp_delay = delay.clone();
         let tcp_task = tokio::spawn(async move {
             loop {
                 let (stream, _) = tcp.accept().await.unwrap();
@@ -246,7 +236,7 @@ mod tests {
                 let message = RendezvousMessage::parse_from_bytes(&stream.next().await.unwrap().unwrap()).unwrap();
                 let request: protocol::Request = protocol::decode(&message.native_p2p_v1().payload, &device_key).unwrap();
                 let reply = if let Action::Begin { box_pk, target, .. } = request.action {
-                    tokio::time::sleep(Duration::from_millis(tcp_delay.load(Ordering::Relaxed))).await;
+                    tokio::time::sleep(Duration::from_millis(1200)).await;
                     protocol::Reply::Ticket(protocol::Ticket { session: protocol::id(), expires: protocol::now().unwrap() + 45,
                         secret_box: protocol::seal(&[1; 32], &box_pk).unwrap(), peer_id: target, signed_peer: vec![],
                         initiator: true, capability: p2p::CAPABILITY.into() })
@@ -257,9 +247,7 @@ mod tests {
             }
         });
         let permits = Arc::new(Semaphore::new(1));
-        for (delay_ms, key, succeeds) in [(0, server_key, true), (1200, server_key, true),
-            (1200, wrong_key, false), (0, wrong_key, false), (1200, wrong_key, false)] {
-            delay.store(delay_ms, Ordering::Relaxed);
+        for (key, succeeds) in [(server_key, true), (wrong_key, false)] {
             let slot = timeout(Duration::from_secs(2), permits.clone().acquire_owned()).await.unwrap().unwrap();
             let started = Instant::now();
             let result = begin(&address.to_string(), key, "peer", slot).await;
@@ -269,7 +257,7 @@ mod tests {
                 drop((session, registration));
             } else {
                 assert!(result.is_err());
-                assert!(started.elapsed() < Duration::from_millis(1300), "unconfirmed server inherited a longer wait");
+                assert!(started.elapsed() < Duration::from_secs(3), "invalid signature did not fall back promptly");
             }
         }
         drop(timeout(Duration::from_secs(2), permits.acquire_owned()).await.unwrap().unwrap());

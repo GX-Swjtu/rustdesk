@@ -1,5 +1,8 @@
 # Android preparation budget, 2026-10-14
 
+Historical package: superseded by the
+[uniform five-second budget](ANDROID-UNIFORM-PREPARATION-20261014.md).
+
 This change follows client `56e716019` / client-common `90015d4`. It relaxes only
 the Android native-strategy preparation window for a previously verified server.
 
