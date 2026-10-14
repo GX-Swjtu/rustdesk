@@ -522,6 +522,10 @@ impl UI {
         crate::SOFTWARE_UPDATE_URL.lock().unwrap().clone()
     }
 
+    fn get_fork_update_status(&self) -> String {
+        crate::fork_update::status_json()
+    }
+
     fn get_new_version(&self) -> String {
         get_new_version()
     }
@@ -788,6 +792,7 @@ impl sciter::EventHandler for UI {
         fn set_options(Value);
         fn set_option(String, String);
         fn get_software_update_url();
+        fn get_fork_update_status();
         fn get_new_version();
         fn get_version();
         fn get_fingerprint();

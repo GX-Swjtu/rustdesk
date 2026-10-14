@@ -1,0 +1,73 @@
+name: Fork release (all platforms, draft only)
+
+on:
+  push:
+    tags: ['*-gx.*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'GX-Swjtu/rustdesk' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    outputs:
+      base: ${{ steps.version.outputs.base }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+      - name: Require persistent Android signing
+        env:
+          KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
+          ALIAS: ${{ secrets.ANDROID_ALIAS }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEY_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          test -n "$KEY" && test -n "$ALIAS" && test -n "$STORE_PASSWORD" && test -n "$KEY_PASSWORD" || {
+            echo '::error::Configure the four Android signing secrets described in docs/fork-release.md'
+            exit 1
+          }
+      - name: Test release policy
+        run: python3 -m unittest discover -s .github/scripts -p test_fork_release.py
+      - name: Validate source and create unpublished draft
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORK_RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 .github/scripts/fork_release.py begin
+          echo "base=${FORK_RELEASE_TAG%-gx.*}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    uses: ./.github/workflows/flutter-build.yml
+    secrets: inherit
+    with:
+      upload-artifact: true
+      upload-tag: ${{ github.ref_name }}
+      fork-release: ${{ github.ref_name }}
+      fork-base-version: ${{ needs.prepare.outputs.base }}
+
+  finalize:
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check all packages, generate checksums and bilingual release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORK_RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 .github/scripts/fork_release.py finalize
+      - name: Publish review instructions
+        run: echo 'All builds completed. Review the draft under Releases and click Publish release to enable client downloads.' >> "$GITHUB_STEP_SUMMARY"

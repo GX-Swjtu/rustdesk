@@ -764,6 +764,9 @@ pub fn get_new_version() -> String {
 
 #[inline]
 pub fn get_version() -> String {
+    if crate::fork_update::enabled() {
+        return crate::fork_update::version().to_owned();
+    }
     crate::VERSION.to_owned()
 }
 

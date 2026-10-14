@@ -880,6 +880,11 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Variable mapping", ""),
         ("Waiting for the peer to refresh its registration", ""),
         ("Waiting for the peer to register its P2P capability", ""),
+        ("New upstream release", ""),
+        ("Fork update available", ""),
+        ("No published fork update is available for this platform.", ""),
+        ("Release check unavailable. Please try again later.", ""),
+        ("Download fork release", ""),
     ].iter().cloned().collect();
 }
 

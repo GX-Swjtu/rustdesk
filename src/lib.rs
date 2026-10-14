@@ -36,6 +36,7 @@ pub(crate) mod update_hash;
 #[cfg(target_os = "macos")]
 mod manual_update;
 mod version;
+mod fork_update;
 pub use version::*;
 #[cfg(any(target_os = "android", target_os = "ios", feature = "flutter"))]
 mod bridge_generated;

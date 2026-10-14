@@ -4071,6 +4071,9 @@ void checkUpdate() {
       platformFFI.registerEventHandler(
           kCheckSoftwareUpdateFinish, kCheckSoftwareUpdateFinish,
           (Map<String, dynamic> evt) async {
+        if (evt['fork'] is Map) {
+          stateGlobal.forkUpdate.assignAll(Map<String, dynamic>.from(evt['fork']));
+        }
         if (evt['url'] is String) {
           stateGlobal.updateUrl.value = evt['url'];
         }

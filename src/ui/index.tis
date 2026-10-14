@@ -34,6 +34,8 @@ var service_stopped = handler.get_option("stop-service") == "Y";
 var disable_udp = handler.get_option("disable-udp") == "Y";
 var using_public_server = handler.using_public_server();
 var software_update_url = "";
+var fork_update_json = "";
+var fork_update = {};
 var key_confirmed = tmp[1];
 var system_error = "";
 
@@ -729,6 +731,7 @@ class App: Reactor.Component
                     </div>
                     {(!is_win || handler.is_installed() || disable_installation) ? "" : <InstallMe />}
                     {software_update_url && !disable_installation ? <UpdateMe /> : ""}
+                    {(fork_update.upstream_newer || fork_update.available || fork_update.error) ? <ForkUpdateMe /> : ""}
                     {is_win && handler.is_installed() && !software_update_url && handler.is_installed_lower_version() && !disable_installation ? <UpgradeMe /> : ""}
                     {is_can_screen_recording ? "": <CanScreenRecording />}
                     {is_can_screen_recording && !handler.is_process_trusted(false) ? <TrustMe /> : ""}
@@ -817,6 +820,20 @@ class UpgradeMe: Reactor.Component {
 
     event click $(#install-me) {
         handler.update_me("");
+    }
+}
+
+class ForkUpdateMe: Reactor.Component {
+    function render() {
+        return <div .install-me>
+            {fork_update.upstream_newer ? <div>{translate('New upstream release')}: {fork_update.upstream}</div> : ""}
+            <div>{fork_update.available ? translate('Fork update available') + ": " + fork_update.available : translate(fork_update.error ? 'Release check unavailable. Please try again later.' : 'No published fork update is available for this platform.')}</div>
+            {fork_update.url ? <div #fork-download.link>{translate('Download fork release')}</div> : ""}
+        </div>;
+    }
+
+    event click $(#fork-download) {
+        if (fork_update.url) handler.open_url(fork_update.url);
     }
 }
 
@@ -1447,6 +1464,12 @@ function checkConnectStatus() {
             app.update();
         }
         tmp = handler.get_software_update_url();
+        var fork_status = handler.get_fork_update_status();
+        if (fork_status && fork_status != fork_update_json) {
+            fork_update_json = fork_status;
+            fork_update = JSON.parse(fork_status);
+            app.update();
+        }
         if (tmp != software_update_url) {
             software_update_url = tmp;
             app.update();

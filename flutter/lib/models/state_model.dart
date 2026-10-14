@@ -26,6 +26,7 @@ class StateGlobal {
   final isPortrait = false.obs;
 
   final updateUrl = ''.obs;
+  final forkUpdate = <String, dynamic>{}.obs;
 
   String _inputSource = '';
 

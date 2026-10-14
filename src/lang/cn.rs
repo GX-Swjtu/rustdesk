@@ -880,5 +880,10 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Variable mapping", "映射端口变化"),
         ("Waiting for the peer to refresh its registration", "正在等待对端刷新登记信息"),
         ("Waiting for the peer to register its P2P capability", "尚未确认对端 P2P 能力，正在等待登记"),
+        ("New upstream release", "上游已发布新版本"),
+        ("Fork update available", "此分支有可更新版本"),
+        ("No published fork update is available for this platform.", "此分支尚无适用于当前平台的已发布更新。"),
+        ("Release check unavailable. Please try again later.", "暂时无法检查发布版本，请稍后重试。"),
+        ("Download fork release", "下载此分支发布版"),
     ].iter().cloned().collect();
 }
