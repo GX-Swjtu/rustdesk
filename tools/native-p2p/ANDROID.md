@@ -10,8 +10,10 @@ for an open Activity, Wi-Fi, network validation or a two-second stability wait.
 The previous foreground/Wi-Fi experiment imposed these restrictions; they were
 not upstream RustDesk requirements and have been removed at the user's request.
 
-Current package checks are in
-[ANDROID-UNIFORM-PREPARATION-20261014.md](ANDROID-UNIFORM-PREPARATION-20261014.md).
+Current waiting behavior and checks are in
+[WAITING-20261014.md](WAITING-20261014.md).
+The [uniform preparation package](ANDROID-UNIFORM-PREPARATION-20261014.md)
+describes the preceding finite-attempt UI.
 The [adaptive preparation package](ANDROID-PREPARATION-BUDGET-20261014.md)
 describes the superseded one/five-second policy.
 The [registration review fixes](ANDROID-REVIEW-FIXES-20261014.md) document the
@@ -51,7 +53,8 @@ superseded opt-in package only.
   physical Wi-Fi/Ethernet networks through ConnectivityManager/LinkProperties.
   They do not gate the attempt: unavailable LAN information, no Wi-Fi, a VPN
   route, or cellular use does not by itself disable public UDP punching. The
-  current strategy engine is IPv4; transport failures use the existing fallback.
+  current strategy engine is IPv4. Graphical connections retry transient failures
+  in fresh bounded rounds; relay starts when the user chooses it.
 - No Activity resume/pause hooks, network callbacks, stability timers, wake
   locks, route changes, process/socket network binding or new Android permissions
   are introduced. MainApplication only initializes the LAN-query JNI references.
@@ -62,21 +65,26 @@ superseded opt-in package only.
 - A sharing mediator advertises capability on its existing UDP channel. A
   controller without that mediator advertises one temporary signed capability
   on demand, sending its existing device key only if hbbs requests it through
-  the original `RegisterPeer/request_pk` exchange. Registration shares the 45-second
-  budget and is withdrawn on failure/cancel or after authenticated KCP
+  the original `RegisterPeer/request_pk` exchange. Registration shares the 60-second
+  round budget and is withdrawn on failure/cancel or after authenticated KCP
   confirmation. Existing registration addresses are reused when available.
 - Mode 0/1/3 use one probe socket; Mode 2/4 may allocate 256 additional sockets.
   Limits remain 257 probe sockets, 1000 random targets, 8192 probe datagrams,
-  38 seconds for probes and 45 seconds total, including reserved KCP time. A
+  38 seconds for probes and 60 seconds per round, including reserved KCP and
+  cleanup time. A shorter signed server ticket still applies. A
   controller may briefly own one extra UDP registration socket.
 - Explicit RustDesk proxies, WebSocket signaling, force-relay and disabled UDP
-  prevent the Android native path. Unsupported peers/servers use the original
-  flow. Temporary registration and capability probing share five seconds on
+  prevent the Android native path and retain the original flow. Explicitly
+  unsupported peers/servers, identity failures or no applicable strategy stop
+  graphical probing and wait for relay/cancel; silence retries without claiming
+  incompatibility. Temporary registration and capability probing share five seconds on
   every attempt, including the first connection or an unknown server. There is
   no cached server-support state. Only a valid signed native ticket allows probing;
   unsupported or invalid replies return immediately, while a silent server can
-  delay fallback by up to five seconds.
-  Registration, negotiation, probes and KCP still share the 45-second total budget.
+  consume the five-second preparation window before the next bounded round.
+  Registration, negotiation, probes, KCP and cleanup share the 60-second round.
+  Retry delays are 2, 5, 10, 10... seconds, without a total round limit. Choosing
+  relay affects only the current logical session; it does not save a peer preference.
 
 ## PC control
 
@@ -103,17 +111,18 @@ The CLI retains its upstream administrator check; the graphical checkbox does
 not invoke the CLI or need that elevation.
 Allow the existing registration refresh to publish the new capability before
 another connection. The graphical switch uses the existing service IPC path;
-it does not change the media, login, permission or fallback implementation.
+it does not change the media, login or permission implementation.
 
 ## Build and verify
 
 Use the Android toolchain/build commands in README.md. Build the arm64 Rust
 release library with the existing `flutter,hwcodec` features, copy it into the
-arm64 JNI directory, then assemble the debug APK. No bridge generation, new
+arm64 JNI directory, then assemble the debug APK. Regenerate the existing Flutter
+bridge for the waiting snapshot/control entry points. No new JNI interface,
 Cargo dependency, SDK or permission upgrade is needed. Verify APK signing, ABI,
 embedded Rust-library SHA-256 and the `Java_ffi_FFI_initNativeP2p` export.
 
-The eight targeted host tests cover default-on/no-LAN admission, disable/UDP-off,
+The targeted host tests cover default-on/no-LAN admission, disable/UDP-off,
 settings cancellation and socket cleanup, bounded LAN candidates, temporary
 registration across rapid reconnects, the shared registration/capability deadline,
 delayed first-contact replies and authentication, original bypass policies and KCP handoff.
@@ -122,7 +131,7 @@ compilation do not establish Android real-device P2P or background operation.
 
 Real-device acceptance remains pending: both connection directions with TUN;
 actual authenticated UDP-native picture/input and relay-traffic evidence; old
-peers/servers, force-relay and failure fallback; Wi-Fi/cellular/VPN changes;
+peers/servers, force-relay and manual relay after failure; Wi-Fi/cellular/VPN changes;
 background/lock-screen behavior under the original service; repeated-attempt
 FD/memory cleanup, battery impact and file transfer. No Android device was attached.
 

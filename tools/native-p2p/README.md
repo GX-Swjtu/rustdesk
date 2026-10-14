@@ -1,12 +1,15 @@
 # Native UDP punching: testing and maintenance
 
-This fork adds a bounded, authenticated UDP Mode 0/1/2/3/4 attempt before the existing
-RustDesk connection flow on Windows/Linux. The feature is enabled unless the
-`enable-native-p2p` option is `N`. Android uses the same default-on switch,
-described in [ANDROID.md](ANDROID.md); iOS/macOS compile out the hooks.
-Explicit RustDesk proxies, WebSocket signaling and forced relay keep their
-existing behavior. The transport still uses the upstream KCP, device identity,
-login/password/confirmation, clipboard, input and file-transfer implementation.
+This fork adds authenticated UDP Mode 0/1/2/3/4 traversal on Windows/Linux and
+Android. With `enable-native-p2p` enabled (the default), graphical ID connections
+prefer P2P and retry fresh bounded rounds until connected or the user chooses
+**Relay connection** / cancels. Explicit unsupported capability, authentication
+failure and no applicable strategy wait for a choice without further probing.
+Timeouts remain unknown/transient; they are not proof that a server is unsupported.
+The existing CLI/diagnostic path still performs one finite attempt with fallback.
+Explicit proxies, WebSocket signaling, forced relay and the disabled option retain
+the original connection flow. iOS/macOS compile out the native hooks.
+The existing KCP, identity, password/confirmation and permission checks remain.
 
 The **Enable UDP hole punching (Native P2P beta)** graphical switch is in PC
 **Settings > General > Other** and Android **Settings** when using a self-hosted server.
@@ -22,20 +25,35 @@ The optional dependency is restricted to Windows/Linux/Android target dependenci
 
 The only signed feature declaration is `native-udp-punch` with an enabled flag.
 There is no V1/V2 capability split, `strategies` field or V2 option. Both endpoints
-and hbbs must support the exact capability; otherwise RustDesk uses its original
-flow. Windows/Linux retain the one-second initial server wait. Android allows
-up to five seconds for registration and negotiation together on every attempt,
-including first contact. Invalid or unsupported responses return immediately;
-only silence consumes the full wait. Both deadlines remain inside the 45-second
-attempt budget. Old experimental native packages
-also fall back. The unchanged protobuf `NativeP2pV1` name is a wire-envelope
-identifier, not a second feature declaration.
+and hbbs must support the exact capability. No protobuf fields, capability
+generations or server ports were added for the waiting experience. Graphical
+clients allow up to five seconds for preparation; Android registration and
+negotiation share that budget. Finite common-library capability probes keep their
+existing one-second default. The unchanged `NativeP2pV1` is a wire-envelope name.
 
-The five strategy families, LAN candidates and TCP-verified multiple exits share
-one 45-second deadline. Selection subtracts one history point; only the existing
-KCP/device-identity secure handshake rewards two points. Diagnostic echo results
-do not reward history or replace desktop acceptance. The common README contains
-the exact roles, limits, source validation and coverage constraints.
+Each graphical round has a 60-second absolute upper bound, including teardown,
+and obeys a shorter signed server ticket. There is a 1.5-second local teardown
+reserve; the existing probe window remains at most 38 seconds with at least three
+seconds for KCP. Failed rounds release the attempt slot before a 2/5/10/10... second
+backoff. Only one round owns probe resources at a time; there is no persistent
+background tunnel. A signed no-strategy reason travels inside the existing Error
+string, so strict old Plan parsers are unaffected.
+
+Relay is a window/session decision (also used by its reconnects), not a stored
+peer preference. It does not call `reconnect(true)`. Forwarding applies it to
+pending/future transports, preserving established raw/multiplexed channels.
+Cancelling one forwarding wait does not close the other mappings; closing a
+shared terminal view still follows the original reference count.
+
+The shared Flutter panel polls a bounded snapshot at most once every 500 ms while
+visible, with only one read in flight. It displays each round, phase, observations,
+strategy, counters and errors, with at most 20 round summaries and 200 phase
+records per flow. Copying diagnostics includes no credentials or probe keys.
+There is no overall success percentage; UDP, KCP and device authentication remain
+distinct stages. UI visibility never gates Android networking.
+
+See [the waiting implementation and validation record](WAITING-20261014.md) for
+ownership, test evidence and the final review of existing paths touched.
 
 ## Build
 
