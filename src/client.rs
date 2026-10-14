@@ -891,7 +891,11 @@ impl Client {
                 }
             }
         }
-        if !exchanged && legacy_secure {
+        if !token.is_empty() {
+            secure_account_signaling(&mut socket, &key, &rendezvous_server)
+                .await
+                .map_err(|e| anyhow!("Failed to secure tcp: {}", e))?;
+        } else if !exchanged && legacy_secure {
             secure_tcp(&mut socket, &key)
                 .await
                 .map_err(|e| anyhow!("Failed to secure tcp: {}", e))?;
@@ -1812,7 +1816,9 @@ impl Client {
                 .await
                 .with_context(|| "Failed to connect to rendezvous server")?;
 
-            if !key.is_empty() && (!token.is_empty() || !switch_code.is_empty()) {
+            if !token.is_empty() {
+                secure_account_signaling(&mut socket, key, rendezvous_server).await?;
+            } else if !key.is_empty() && !switch_code.is_empty() {
                 secure_tcp(&mut socket, key).await?;
             }
 
@@ -5243,6 +5249,23 @@ mod port_forward_mux_tests {
     }
 }
 
+// Account tokens must never use secure_tcp's compatibility fallback to plaintext.
+async fn secure_account_signaling(conn: &mut Stream, key: &str, server: &str) -> ResultType<()> {
+    if matches!(conn, Stream::WebSocket(_)) {
+        if hbb_common::websocket::check_ws(server).starts_with("wss://") {
+            return Ok(());
+        }
+        bail!("Account signalling requires WSS or encrypted TCP");
+    }
+    if !conn.is_secured() {
+        secure_tcp_required(conn, key).await?;
+    }
+    if !conn.is_secured() {
+        bail!("Account signalling key exchange did not encrypt the connection");
+    }
+    Ok(())
+}
+
 pub async fn hc_connection(
     feedback: i32,
     rendezvous_server: String,
@@ -5271,7 +5294,7 @@ async fn hc_connection_(
     let host = check_port(&rendezvous_server, RENDEZVOUS_PORT);
     let mut conn = connect_tcp(host.clone(), CONNECT_TIMEOUT).await?;
     let key = crate::get_key(true).await;
-    crate::secure_tcp(&mut conn, &key).await?;
+    secure_account_signaling(&mut conn, &key, &host).await?;
     let mut msg_out = RendezvousMessage::new();
     msg_out.set_hc(HealthCheck {
         token,
@@ -5860,6 +5883,29 @@ mod kx_tests {
     };
 
     const PEER_ID: &str = "123456789";
+
+    #[tokio::test]
+    async fn account_tokens_are_not_sent_after_a_plaintext_greeting_or_without_a_key() {
+        let (pk, _) = sign::gen_keypair();
+        for key in [base64::encode(pk.0, base64::Variant::Original), String::new()] {
+            let listener = hbb_common::tcp::new_listener("127.0.0.1:0", false).await.unwrap();
+            let host = listener.local_addr().unwrap().to_string();
+            let server = tokio::spawn(async move {
+                let (stream, addr) = listener.accept().await.unwrap();
+                let mut stream = FramedStream::from(stream, addr);
+                let mut greeting = RendezvousMessage::new();
+                greeting.set_register_peer_response(RegisterPeerResponse::new());
+                let _ = stream.send(&greeting).await;
+                !matches!(stream.next_timeout(2000).await, Some(Ok(_)))
+            });
+            let result = timeout(3000, Client::request_relay(
+                PEER_ID, String::new(), &host, false, &key, "disposable-account-token",
+                ConnType::DEFAULT_CONN, "",
+            )).await.unwrap();
+            assert!(result.is_err());
+            assert!(server.await.unwrap(), "the server received a token-bearing request");
+        }
+    }
 
     /// What the stand-in controlled peer saw: the version the controller picked, and whether the
     /// controller's first application message decrypted.

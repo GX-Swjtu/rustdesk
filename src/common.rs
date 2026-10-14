@@ -2328,7 +2328,12 @@ pub async fn secure_tcp(conn: &mut Stream, key: &str) -> ResultType<()> {
 }
 
 async fn secure_tcp_silent(conn: &mut Stream, key: &str) -> ResultType<()> {
-    secure_tcp_impl(conn, key, false).await
+    secure_tcp_impl(conn, key, false).await?;
+    // Only the API proxy uses this helper; its requests may contain login credentials.
+    if !conn.is_secured() {
+        bail!("TCP API proxy requires an encrypted connection");
+    }
+    Ok(())
 }
 
 /// Like [`secure_tcp`], but returns only once the server's key exchange has actually encrypted
@@ -3623,6 +3628,10 @@ mod tests {
         let host = rendezvous_stub(serve).await;
         let mut conn = connect(&host).await;
         secure_tcp(&mut conn, &key).await.unwrap();
+        assert!(!conn.is_secured());
+        let host = rendezvous_stub(serve).await;
+        let mut conn = connect(&host).await;
+        assert!(secure_tcp_silent(&mut conn, &key).await.is_err());
         assert!(!conn.is_secured());
     }
 
