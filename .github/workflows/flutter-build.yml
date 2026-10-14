@@ -1618,6 +1618,10 @@ jobs:
           # env.ANDROID_SIGN_TOOL_VERSION is set by Step "Setup sign tool version variable"
           BUILD_TOOLS_VERSION: ${{ env.ANDROID_SIGN_TOOL_VERSION }}
 
+      - name: Verify fork APK signature and upgrade version
+        if: inputs.fork-release != ''
+        run: python3 .github/scripts/fork_release.py verify-apk --apk "${{ steps.sign-rustdesk.outputs.signedReleaseFile }}"
+
       - name: Upload Artifacts
         if: env.ANDROID_SIGNING_KEY != null && env.UPLOAD_ARTIFACT == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1814,6 +1818,10 @@ jobs:
         env:
           # env.ANDROID_SIGN_TOOL_VERSION is set by Step "Setup sign tool version variable"
           BUILD_TOOLS_VERSION: ${{ env.ANDROID_SIGN_TOOL_VERSION }}
+
+      - name: Verify fork APK signature and upgrade version
+        if: inputs.fork-release != ''
+        run: python3 .github/scripts/fork_release.py verify-apk --apk "${{ steps.sign-rustdesk.outputs.signedReleaseFile }}"
 
       - name: Upload Artifacts
         if: env.ANDROID_SIGNING_KEY != null && env.UPLOAD_ARTIFACT == 'true'

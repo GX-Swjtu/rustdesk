@@ -69,6 +69,14 @@ def prepare(tag):
     build_number = android_code if "android" in os.environ.get("GITHUB_JOB", "") else revision
     text = re.sub(r"^version: .+$", f"version: {base}+{build_number}", pubspec.read_text(encoding="utf-8"), flags=re.M)
     pubspec.write_text(text, encoding="utf-8")
+    # Flutter adds ABI offsets for Play Store split APKs. GitHub downloads must
+    # allow switching between an ABI APK and Universal without a downgrade.
+    gradle = ROOT / "flutter/android/app/build.gradle"
+    with gradle.open("a", encoding="utf-8") as stream:
+        stream.write("\nandroid.applicationVariants.all { variant ->\n"
+                     "    variant.outputs.each { output ->\n"
+                     f"        output.versionCodeOverride = {android_code}\n"
+                     "    }\n}\n")
     replace("build.py", "Version: %s\n", f"Version: %s-gx.{revision}\n")
     replace("res/msi/preprocess.py", "return int(datetime.datetime.now().timestamp() / 60)", f"return {revision}")
     for file in (ROOT / "res").glob("rpm*.spec"):
@@ -122,6 +130,17 @@ def digest(file):
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             sha.update(chunk)
     return sha.hexdigest()
+
+
+def verify_apk(tag, apk):
+    expected = parse_tag(tag)[2]
+    build_tools = Path(os.environ["ANDROID_HOME"]) / "build-tools" / os.environ["ANDROID_SIGN_TOOL_VERSION"]
+    badging = command(str(build_tools / "aapt"), "dump", "badging", str(apk))
+    code = re.search(r"^package: .*versionCode='(\d+)'", badging, re.M)
+    if not code or int(code[1]) != expected:
+        raise ValueError(f"APK versionCode must be {expected} for both ABI and Universal downloads")
+    command(str(build_tools / "apksigner"), "verify", str(apk))
+    print(f"Verified signed APK with versionCode {expected}: {apk.name}")
 
 
 def notes(tag, upstream, assets):
@@ -181,9 +200,10 @@ def finalize(tag, destination):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=["validate", "prepare", "begin", "finalize"])
+    parser.add_argument("action", choices=["validate", "prepare", "begin", "finalize", "verify-apk"])
     parser.add_argument("--tag", default=os.environ.get("FORK_RELEASE_TAG", ""))
     parser.add_argument("--output", type=Path, default=ROOT / "release-assets")
+    parser.add_argument("--apk", type=Path)
     args = parser.parse_args()
     if args.action == "validate":
         check_source(args.tag)
@@ -191,6 +211,10 @@ def main():
         prepare(args.tag)
     elif args.action == "begin":
         begin(args.tag)
+    elif args.action == "verify-apk":
+        if not args.apk:
+            parser.error("verify-apk requires --apk")
+        verify_apk(args.tag, args.apk.resolve())
     else:
         finalize(args.tag, args.output.resolve())
 

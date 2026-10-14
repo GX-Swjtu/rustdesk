@@ -22,7 +22,7 @@ class ForkReleaseTests(unittest.TestCase):
     def test_prepare_stamps_identity_without_breaking_native_versions(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for name in ["Cargo.toml", "res/fork-version", "flutter/pubspec.yaml", "build.py", "res/msi/preprocess.py", "res/PKGBUILD", "res/rpm.spec"]:
+            for name in ["Cargo.toml", "res/fork-version", "flutter/pubspec.yaml", "flutter/android/app/build.gradle", "build.py", "res/msi/preprocess.py", "res/PKGBUILD", "res/rpm.spec"]:
                 target = root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(release.ROOT / name, target)
@@ -33,6 +33,7 @@ class ForkReleaseTests(unittest.TestCase):
                 self.assertEqual(release.package_version(), base)
                 self.assertEqual((root / "res/fork-version").read_text(encoding="utf-8").strip(), tag)
                 self.assertIn("+" + str(release.parse_tag(tag)[2]), (root / "flutter/pubspec.yaml").read_text(encoding="utf-8"))
+                self.assertIn("output.versionCodeOverride = " + str(release.parse_tag(tag)[2]), (root / "flutter/android/app/build.gradle").read_text(encoding="utf-8"))
                 self.assertIn("Version: %s-gx.2", (root / "build.py").read_text(encoding="utf-8"))
                 self.assertIn("Release:    2.gx", (root / "res/rpm.spec").read_text(encoding="utf-8"))
 
@@ -43,6 +44,16 @@ class ForkReleaseTests(unittest.TestCase):
                 with patch.object(release, "release", return_value=value), self.assertRaises(ValueError):
                     release.finalize(tag, Path("unused"))
         self.assertEqual(release.normalized_name("rustdesk-1.5.1-universal-signed.apk", "1.5.1", tag), f"rustdesk-{tag}-universal.apk")
+
+    def test_apk_architecture_offsets_cannot_break_universal_upgrades(self):
+        tag = "1.5.1-gx.2"
+        expected = release.parse_tag(tag)[2]
+        with patch.dict(os.environ, {"ANDROID_HOME": "/sdk", "ANDROID_SIGN_TOOL_VERSION": "36.0.0"}):
+            for offset in [1000, 2000, 4000]:
+                with patch.object(release, "command", return_value=f"package: name='rustdesk' versionCode='{expected + offset}'"), self.assertRaises(ValueError):
+                    release.verify_apk(tag, Path("arm.apk"))
+            with patch.object(release, "command", side_effect=[f"package: name='rustdesk' versionCode='{expected}'", ""]):
+                release.verify_apk(tag, Path("universal.apk"))
 
 
 if __name__ == "__main__":

@@ -32,7 +32,7 @@
 
 iOS 生成未签名 `.xcarchive.zip`，需要维护者自己的 Apple 分发签名才能安装，因此客户端不把它当作 iOS 可安装更新。macOS 当前生成未公证 DMG，Windows 当前没有 Authenticode 签名。官方 Web 和 App Store 链接是官方服务，不能冒充本 fork 的发布；此源码中的旧 Web 构建被上游禁用，保持该状态。
 
-显示版本和发布资产名使用完整 fork tag。保留 Cargo 的三段版本用于协议兼容和原生版本资源；Windows MSI、macOS/Windows Flutter build number 使用 fork revision；Android versionCode 使用递增编码；DEB、RPM 和 Arch 包修订号也递增。`N` 范围为 1–999。客户端更新比较不依赖 Cargo/SemVer 将后缀视为 prerelease 的规则。
+显示版本和发布资产名使用完整 fork tag。保留 Cargo 的三段版本用于协议兼容和原生版本资源；Windows MSI、macOS/Windows Flutter build number 使用 fork revision；Android versionCode 使用递增编码，同一版本的各架构 APK 和 Universal APK 使用相同编码，允许互相覆盖安装，CI 会检查实际签名包；DEB、RPM 和 Arch 包修订号也递增。`N` 范围为 1–999。客户端更新比较不依赖 Cargo/SemVer 将后缀视为 prerelease 的规则。
 
 ## 签名与权限
 
