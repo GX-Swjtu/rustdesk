@@ -105,6 +105,7 @@ pub mod helper;
 mod native_p2p;
 pub mod io_loop;
 pub mod screenshot;
+mod self_connection;
 
 pub const MILLI1: Duration = Duration::from_millis(1);
 pub const SEC30: Duration = Duration::from_secs(30);
@@ -462,6 +463,7 @@ impl Client {
         } else {
             (peer, "", key, token)
         };
+        self_connection::check(peer, &Config::get_id(), other_server, conn_type)?;
         let (rendezvous_server, servers, contained) = if other_server.is_empty() {
             crate::get_rendezvous_server(1_000).await
         } else {

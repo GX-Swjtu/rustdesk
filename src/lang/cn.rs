@@ -886,5 +886,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Release check unavailable. Please try again later.", "暂时无法检查发布版本，请稍后重试。"),
         ("Download fork release", "下载此分支发布版"),
         ("Check for updates", "检查更新"),
+        ("Connecting to this device is not allowed", "不允许远程控制本机"),
     ].iter().cloned().collect();
 }
