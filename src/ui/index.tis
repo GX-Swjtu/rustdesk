@@ -829,11 +829,16 @@ class ForkUpdateMe: Reactor.Component {
             {fork_update.upstream_newer ? <div>{translate('New upstream release')}: {fork_update.upstream}</div> : ""}
             <div>{fork_update.available ? translate('Fork update available') + ": " + fork_update.available : translate(fork_update.error ? 'Release check unavailable. Please try again later.' : 'No published fork update is available for this platform.')}</div>
             {fork_update.url ? <div #fork-download.link>{translate('Download fork release')}</div> : ""}
+            <div #fork-check.link>{translate('Check for updates')}</div>
         </div>;
     }
 
     event click $(#fork-download) {
         if (fork_update.url) handler.open_url(fork_update.url);
+    }
+
+    event click $(#fork-check) {
+        handler.check_fork_update();
     }
 }
 

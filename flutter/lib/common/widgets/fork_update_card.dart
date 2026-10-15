@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../common.dart';
+import '../../models/platform_model.dart';
 import '../../models/state_model.dart';
 
 class ForkUpdateCard extends StatelessWidget {
@@ -39,6 +40,10 @@ class ForkUpdateCard extends StatelessWidget {
                       mode: LaunchMode.externalApplication),
                   child: Text(translate('Download fork release')),
                 ),
+              TextButton(
+                onPressed: () => bind.mainGetSoftwareUpdateUrl(),
+                child: Text(translate('Check for updates')),
+              ),
             ],
           ),
         ),

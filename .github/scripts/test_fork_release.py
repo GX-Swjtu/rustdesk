@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 from pathlib import Path
 import shutil
@@ -54,6 +55,40 @@ class ForkReleaseTests(unittest.TestCase):
                     release.verify_apk(tag, Path("arm.apk"))
             with patch.object(release, "command", side_effect=[f"package: name='rustdesk' versionCode='{expected}'", ""]):
                 release.verify_apk(tag, Path("universal.apk"))
+
+    def test_finalization_requires_every_build_output_before_writing_completion_marker(self):
+        tag = "1.5.1-gx.3"
+        # Independent inventory of the supported release matrix.
+        suffixes = [
+            "x86_64.exe", "x86_64.msi", "aarch64.exe", "aarch64.msi", "x86-sciter.exe",
+            "x86_64.dmg", "aarch64.dmg", "aarch64.apk", "armv7.apk", "x86_64.apk", "universal.apk",
+            "x86_64.deb", "aarch64.deb", "armv7-sciter.deb", "x86_64-sciter.deb",
+            "x86_64.AppImage", "aarch64.AppImage", "x86_64.flatpak", "aarch64.flatpak",
+            "x86_64-sciter.flatpak", "ios-unsigned.xcarchive.zip", "unsigned.tar.gz",
+            "3-x86_64.pkg.tar.zst", "3.gx.x86_64.rpm", "3.gx.aarch64.rpm",
+            "3.gx.x86_64-suse.rpm", "3.gx.aarch64-suse.rpm",
+        ]
+        names = [f"rustdesk-{tag}-{suffix}" for suffix in suffixes]
+        names += [f"rustdesk-unattended-wayland-{tag}-x86_64.deb", "rustdesk.sbom.json"]
+        assets = [{"id": i, "name": name, "size": 1} for i, name in enumerate(names)]
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(release, "check_source", return_value=("1.5.1", "1.5.0")), \
+                patch.object(release, "command", return_value="source-commit") as command:
+            destination = Path(directory)
+            for asset in assets:
+                (destination / asset["name"]).write_bytes(b"x")
+            for missing in assets:
+                with self.subTest(missing=missing["name"]), \
+                        patch.object(release, "release", return_value={"draft": True, "assets": [a for a in assets if a != missing]}), \
+                        self.assertRaisesRegex(ValueError, "Build assets incomplete"):
+                    release.finalize(tag, destination)
+                command.assert_not_called()
+                self.assertFalse((destination / "fork-release.json").exists())
+            with patch.object(release, "release", return_value={"draft": True, "assets": assets}):
+                release.finalize(tag, destination)
+            manifest = json.loads((destination / "fork-release.json").read_text())
+            self.assertEqual({a["name"] for a in manifest["assets"]}, set(names))
+            self.assertEqual(Path(command.call_args.args[4]).name, "fork-release.json")
 
 
 if __name__ == "__main__":

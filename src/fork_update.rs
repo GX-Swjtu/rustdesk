@@ -1,6 +1,18 @@
-use hbb_common::{log, tls::TlsType, tokio, ResultType};
+use base::config::keys;
+use hbb_common::{
+    config::{self, LocalConfig},
+    log,
+    tls::TlsType,
+    tokio, ResultType,
+};
 use serde::{Deserialize, Serialize};
-use std::{sync::Mutex, time::Duration};
+use std::{
+    sync::{
+        mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError},
+        Mutex,
+    },
+    time::Duration,
+};
 
 pub const REPOSITORY: &str = "GX-Swjtu/rustdesk";
 const UPSTREAM: &str = "rustdesk/rustdesk";
@@ -27,6 +39,41 @@ pub struct Status {
 
 lazy_static::lazy_static! {
     static ref STATUS: Mutex<Status> = Mutex::new(Status::default());
+    static ref CHECK_REQUESTS: SyncSender<()> = {
+        let (tx, rx) = mpsc::sync_channel(1);
+        std::thread::spawn(move || check_worker(rx));
+        tx
+    };
+}
+
+pub fn request_check() {
+    match CHECK_REQUESTS.try_send(()) {
+        Ok(()) | Err(TrySendError::Full(())) => {}
+        Err(TrySendError::Disconnected(())) => log::error!("Fork update worker stopped"),
+    }
+}
+
+// Started only by the GUI's update entry point, so results reach its event stream.
+// A bounded queue coalesces repeated clicks while a check is running.
+fn check_worker(requests: Receiver<()>) {
+    let mut interval = Duration::from_secs(60 * 60);
+    loop {
+        match requests.recv_timeout(interval) {
+            Ok(()) | Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return,
+        }
+        let option = LocalConfig::get_option(keys::OPTION_ENABLE_CHECK_UPDATE);
+        if !config::option2bool(keys::OPTION_ENABLE_CHECK_UPDATE, &option) {
+            continue;
+        }
+        interval = match crate::common::do_check_software_update() {
+            Ok(()) => Duration::from_secs(60 * 60),
+            Err(err) => {
+                log::warn!("Fork update check failed: {err}");
+                Duration::from_secs(15 * 60)
+            }
+        };
+    }
 }
 
 pub fn status_json() -> String {

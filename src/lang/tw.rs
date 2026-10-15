@@ -885,5 +885,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("No published fork update is available for this platform.", ""),
         ("Release check unavailable. Please try again later.", ""),
         ("Download fork release", ""),
+        ("Check for updates", "檢查更新"),
     ].iter().cloned().collect();
 }

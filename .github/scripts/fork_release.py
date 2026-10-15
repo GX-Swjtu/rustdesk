@@ -114,14 +114,20 @@ def normalized_name(name, base, tag):
 
 
 def required_assets(tag):
+    _, revision, _ = parse_tag(tag)
     suffixes = [
         "x86_64.exe", "x86_64.msi", "aarch64.exe", "aarch64.msi", "x86-sciter.exe",
         "x86_64.dmg", "aarch64.dmg", "aarch64.apk", "armv7.apk", "x86_64.apk", "universal.apk",
         "x86_64.deb", "aarch64.deb", "armv7-sciter.deb", "x86_64-sciter.deb",
         "x86_64.AppImage", "aarch64.AppImage", "x86_64.flatpak", "aarch64.flatpak",
-        "ios-unsigned.xcarchive.zip",
+        "x86_64-sciter.flatpak", "ios-unsigned.xcarchive.zip", "unsigned.tar.gz",
+        f"{revision}-x86_64.pkg.tar.zst",
+        f"{revision}.gx.x86_64.rpm", f"{revision}.gx.aarch64.rpm",
+        f"{revision}.gx.x86_64-suse.rpm", f"{revision}.gx.aarch64-suse.rpm",
     ]
-    return {f"rustdesk-{tag}-{suffix}" for suffix in suffixes}
+    return {f"rustdesk-{tag}-{suffix}" for suffix in suffixes} | {
+        f"rustdesk-unattended-wayland-{tag}-x86_64.deb", "rustdesk.sbom.json",
+    }
 
 
 def digest(file):
@@ -170,8 +176,8 @@ def finalize(tag, destination):
     assets = [a for a in current["assets"] if a["name"] not in ("fork-release.json", "SHA256SUMS")]
     names = {normalized_name(a["name"], base, tag) for a in assets if a["size"] > 0}
     missing = required_assets(tag) - names
-    if missing or not any(n.endswith(".rpm") for n in names) or not any(n.endswith(".zst") for n in names):
-        raise ValueError("Build assets incomplete: " + ", ".join(sorted(missing)) + "; RPM and Arch are also required")
+    if missing:
+        raise ValueError("Build assets incomplete: " + ", ".join(sorted(missing)))
     if len(names) != len(assets):
         raise ValueError("Empty or duplicate release assets")
     destination.mkdir(parents=True, exist_ok=True)

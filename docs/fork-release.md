@@ -8,7 +8,7 @@
 - 官方新版只产生通知。比较基线来自 `res/fork-upstream-version`，表示已经手动合并的官方稳定标签；不能用上游 master 中提前递增的 Cargo 版本代替这项基线。
 - fork 按 `(major, minor, patch, gx revision)` 比较，因此 `gx.10` 新于 `gx.9`。只有版本更高、含构建完成标记 `fork-release.json`，并有当前平台安装包的正式 Release 才出现下载按钮。
 - 下载按钮打开 `https://github.com/GX-Swjtu/rustdesk/releases/tag/<version>`。不跳转官方安装包，不调用原版后台自动安装器。
-- 无网络或 GitHub API 限流时提示检查暂不可用，不把错误解释为已经是最新版。检查遵循原客户端的“启动时检查更新”设置。
+- 无网络或 GitHub API 限流时提示检查暂不可用，不把错误解释为已经是最新版。主界面首次检查后每小时复查，失败时 15 分钟后重试；提示卡也可以点击“检查更新”。检查遵循原客户端的“启动时检查更新”设置，关闭后停止发起检查。后台服务不自动安装更新。
 - `fork-updates` 是本 fork 默认 Cargo feature；关闭它可恢复官方更新路径。开发工作区显示 `1.5.1-gx.0`，发布工作流在临时构建目录写入实际 tag。
 
 ## 一次发布
@@ -53,6 +53,6 @@ GitHub Actions 只需自动提供的 `GITHUB_TOKEN`，权限 `contents: write`�
 - `cargo test --locked --release --lib --features flutter,hwcodec fork_update::tests` 检查更新来源、版本比较、草稿/缺包/非本 fork URL 拒绝规则。
 - `.github/scripts/fork_release.py prepare` 只允许在 CI 临时 checkout 中运行；它会修改构建文件，不用于日常开发目录。
 - 上游改变安装包名称、平台矩阵或打包脚本时，更新 `required_assets` 和对应准备逻辑。发布检查会在不匹配时拒绝补上完成标记。
-- 完成标记在所有平台构建和校验文件生成后最后上传。工作流失败只留下草稿；客户端不会拿失败草稿更新。
+- 完成标记在所有平台构建和校验文件生成后最后上传。逐项要求 29 个构建附件，包括四种 RPM、三种 Flatpak、Arch、DRM、未签名归档及 SBOM；任一缺失或为空均不写入完成标记。工作流失败只留下草稿；客户端不会拿失败草稿更新。
 
 参考：[官方发布页](https://github.com/rustdesk/rustdesk/releases)、[GitHub Releases API](https://docs.github.com/en/rest/releases/releases)、[复用工作流](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows)。
