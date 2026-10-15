@@ -2889,7 +2889,7 @@ jobs:
           shell: /bin/bash
           install: |
             apt-get update -y
-            apt-get install -y git flatpak flatpak-builder
+            apt-get install -y git flatpak flatpak-builder python3
           run: |
             # disable git safe.directory
             git config --global --add safe.directory "*"
@@ -2899,6 +2899,7 @@ jobs:
             # package
             pushd flatpak
             git clone https://github.com/flathub/shared-modules.git --depth=1
+            python3 ../.github/scripts/flatpak_mirrors.py shared-modules/dbus-glib/dbus-glib.json
             flatpak-builder --user --install-deps-from=flathub -y --force-clean --repo=repo ./build ./rustdesk.json
             flatpak build-bundle ./repo rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.flatpak com.rustdesk.RustDesk
 
