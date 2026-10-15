@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "common_repository": "GX-Swjtu/hbb_common",
+  "client_common": "4ab2e1ff73b49166f958c4cab230a6de0b63215c",
+  "server": {
+    "repository": "GX-Swjtu/rustdesk-server",
+    "commit": "839642093887cbb8f4d4acefaf95e6a0a757838a",
+    "version": "1.1.17",
+    "common": "8bb7a100e7ad4eff48322284b49d9e3104c1f701"
+  },
+  "account": {
+    "repository": "GX-Swjtu/rustdesk-account-server",
+    "commit": "33d59aefba66ffda63fa5557c00a45c0385e9ec1",
+    "version": "0.1.1"
+  }
+}

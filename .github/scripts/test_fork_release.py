@@ -70,6 +70,16 @@ class ForkReleaseTests(unittest.TestCase):
         ]
         names = [f"rustdesk-{tag}-{suffix}" for suffix in suffixes]
         names += [f"rustdesk-unattended-wayland-{tag}-x86_64.deb", "rustdesk.sbom.json"]
+        lock = release.suite.load()
+        for component, targets in [("server", ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]),
+                                   ("account", ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-apple-darwin"])]:
+            prefix = "rustdesk-server" if component == "server" else "rustdesk-account-server"
+            names += [f"{prefix}-{lock[component]['version']}-{target}" + (".zip" if "windows" in target else ".tar.gz") for target in targets]
+        names += [f"rustdesk-account-server-{lock['account']['version']}-docker-linux-x86_64.tar.gz",
+                  f"rustdesk-hbb-common-client-{lock['client_common']}.tar.gz",
+                  f"rustdesk-hbb-common-server-{lock['server']['common']}.tar.gz",
+                  f"rustdesk-{tag}-server-guide.zip", "suite-components.json"]
+        self.assertEqual(len(names), 42)
         assets = [{"id": i, "name": name, "size": 1} for i, name in enumerate(names)]
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(release, "check_source", return_value=("1.5.1", "1.5.0")), \
@@ -77,6 +87,8 @@ class ForkReleaseTests(unittest.TestCase):
             destination = Path(directory)
             for asset in assets:
                 (destination / asset["name"]).write_bytes(b"x")
+            source_manifest = destination / "suite-components.json"
+            source_manifest.write_text(json.dumps(release.suite.manifest(tag, "source-commit")))
             for missing in assets:
                 with self.subTest(missing=missing["name"]), \
                         patch.object(release, "release", return_value={"draft": True, "assets": [a for a in assets if a != missing]}), \
@@ -89,6 +101,17 @@ class ForkReleaseTests(unittest.TestCase):
             manifest = json.loads((destination / "fork-release.json").read_text())
             self.assertEqual({a["name"] for a in manifest["assets"]}, set(names))
             self.assertEqual(Path(command.call_args.args[4]).name, "fork-release.json")
+            source_manifest.write_text(json.dumps(release.suite.manifest("different-release", "source-commit")))
+            command.reset_mock()
+            with patch.object(release, "release", return_value={"draft": True, "assets": assets}), \
+                    self.assertRaisesRegex(ValueError, "pinned source manifest"):
+                release.finalize(tag, destination)
+            self.assertFalse(any("upload" in call.args or "edit" in call.args for call in command.call_args_list))
+
+    def test_client_renaming_never_changes_companion_versions(self):
+        for name in ["rustdesk-server-1.5.1-x86_64-unknown-linux-gnu.tar.gz", "rustdesk-account-server-1.5.1-x86_64-pc-windows-msvc.zip"]:
+            self.assertEqual(release.normalized_name(name, "1.5.1", "1.5.1-gx.3"), name)
+        self.assertEqual(release.normalized_name("rustdesk-unattended-wayland-1.5.1-x86_64.deb", "1.5.1", "1.5.1-gx.3"), "rustdesk-unattended-wayland-1.5.1-gx.3-x86_64.deb")
 
 
 if __name__ == "__main__":

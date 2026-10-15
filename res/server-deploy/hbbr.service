@@ -1,0 +1,22 @@
+[Unit]
+Description=RustDesk GX relay server
+Wants=network-online.target rustdesk-gx-hbbs.service
+After=network-online.target rustdesk-gx-hbbs.service
+
+[Service]
+User=rustdesk-server
+Group=rustdesk-server
+WorkingDirectory=/var/lib/rustdesk-server
+ExecStart=/opt/rustdesk-server/bin/hbbr -p 21117 -k _
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/rustdesk-server
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

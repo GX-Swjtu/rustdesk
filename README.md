@@ -1,3 +1,30 @@
+# RustDesk GX — Native P2P fork
+
+**这是 GX-Swjtu 维护的独立 fork，不是 RustDesk 官方发行版。**
+**This is an independent fork, not an official RustDesk release.**
+
+[本 fork 下载 / Fork downloads](https://github.com/GX-Swjtu/rustdesk/releases) · [服务器部署 / Server deployment](docs/server-deployment.md) · [客户端填写 / Client setup](docs/client-setup.md) · [构建与发布 / Release workflow](docs/fork-release.md)
+
+官方 RustDesk 本身支持 P2P 和中继。本 fork 的主要差异是额外的 Native UDP/KCP 协调，以及 Windows/Linux Flutter、Android 图形连接中的持续 P2P 等待和人工选择中继。
+Upstream RustDesk already supports direct and relayed connections. This fork adds authenticated Native UDP/KCP coordination and a P2P-first waiting flow for Windows/Linux Flutter and Android.
+
+| 行为 / Behavior | 本 fork 相对上游默认路径的变化 / Fork changes |
+| --- | --- |
+| P2P 尝试 / Direct attempts | 配套 hbbs 协调带签名的设备能力与会话，按网络情况选择打洞策略，直连数据通过 KCP 传输；不经 hbbr 转发。 / A matching hbbs coordinates signed capabilities and bounded UDP strategies; direct traffic uses KCP. |
+| 等待与回退 / Waiting and fallback | 单轮最多约 60 秒，暂时失败持续重试并显示诊断；用户选择“中继连接”或取消。不会仅因一轮超时就静默转为中继。 / Transient failures retry in bounded rounds with diagnostics; the user chooses relay or cancellation. |
+| 适用范围 / Scope | 上述持续等待仅适用于 Windows/Linux Flutter 和 Android。Sciter、CLI/有限诊断保留一次尝试与原回退方式；macOS/iOS 不提供这套额外 Native P2P 控制器。 / Platform and frontend support differ. |
+| 原有连接方式 / Existing paths | 关闭 Native P2P、配置显式代理/WebSocket 或强制中继时，按对应的原路径处理。网络限制仍可能使直连失败。 / Existing paths remain available; direct connectivity is not guaranteed. |
+| 自建账号 / Account API | 配套独立账号服务提供登录、设备列表与地址簿；启用 hbbs 账号加密握手。不是官方 Server Pro，也不替代远控密码/确认授权。 / An optional independent account API; not Server Pro or remote-control authorization. |
+| 发布与更新 / Releases | 同一 Release 提供客户端、hbbs/hbbr、账号服务、两套 common 源码和部署指南。上游更新仅通知；只有人工发布本 fork 的完整正式版后，客户端才提供下载。 / Upstream notifications are separate from manually published fork updates. |
+
+联合发布直接编译 [组件清单](res/fork-components.json) 中的固定提交，各组件无需先独立发布。它们也可以单独构建、单独发布或不运行独立发布；`hbb_common` 编入程序，不是需要启动的服务。服务器部署和升级由管理员操作。
+Companion repositories keep their own release lifecycles. Shared libraries are compiled into the programs, and server deployment remains a separate administrator action.
+
+以下保留上游 README 供参考，其中官方下载、商店和 Pro 链接指向上游服务。获取本 fork 请使用上方的 Fork downloads。
+The upstream README follows; its official downloads, stores and Pro links refer to upstream products.
+
+---
+
 <p align="center">
   <img src="res/logo-header.svg" alt="RustDesk - Your remote desktop"><br>
   <a href="#raw-steps-to-build">Build</a> •

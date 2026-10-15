@@ -1,0 +1,57 @@
+name: Companion suite build (artifacts only)
+on:
+  push:
+    branches: ['build/suite/**']
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      release-tag:
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  pins:
+    runs-on: ubuntu-24.04
+    outputs:
+      lock: ${{ steps.pins.outputs.lock }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - id: pins
+        run: echo "lock=$(python3 .github/scripts/suite.py validate)" >> "$GITHUB_OUTPUT"
+  server:
+    needs: pins
+    uses: GX-Swjtu/rustdesk-server/.github/workflows/fork-build.yml@839642093887cbb8f4d4acefaf95e6a0a757838a
+    with:
+      source-ref: ${{ fromJSON(needs.pins.outputs.lock).server.commit }}
+  account:
+    needs: pins
+    uses: GX-Swjtu/rustdesk-account-server/.github/workflows/build.yml@33d59aefba66ffda63fa5557c00a45c0385e9ec1
+    with:
+      source-ref: ${{ fromJSON(needs.pins.outputs.lock).account.commit }}
+  sources-and-guide:
+    needs: pins
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: GX-Swjtu/rustdesk-server
+          ref: ${{ fromJSON(needs.pins.outputs.lock).server.commit }}
+          path: suite-server
+          submodules: recursive
+          persist-credentials: false
+      - name: Package both common baselines and deployment guide
+        env:
+          SUITE_TAG: ${{ inputs.release-tag || format('preview-{0}', github.sha) }}
+        run: python3 .github/scripts/suite.py package --tag "$SUITE_TAG" --server suite-server --output suite-assets
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: suite-sources-and-guide
+          path: suite-assets/*
+          if-no-files-found: error

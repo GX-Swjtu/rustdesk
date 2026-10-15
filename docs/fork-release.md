@@ -2,6 +2,27 @@
 
 本 fork 的发布仓库是 `GX-Swjtu/rustdesk`。合并上游和正式发布均由维护者手动决定；工作流不会定时合并上游，不会自动发布正式版本，也不会部署任何服务器。
 
+## 联合发布的组件
+
+客户端 Release 同时附带 hbbs/hbbr/rustdesk-utils（三个平台）、账号服务（五个平台及一个 Linux x86_64 容器包）、客户端和服务端各自的 hbb_common 源码、离线部署/客户端配置指南。客户端自身的全平台矩阵保持原样。
+
+[res/fork-components.json](../res/fork-components.json) 固定所有组件的完整提交与版本。`hbb_common` 是编入程序的依赖，不是独立服务；客户端和服务端各自保留兼容的 common 基线，不把它们强行合为一份。`suite-components.json` 与 `fork-release.json` 随 Release 记录这些提交。
+
+更新组件时，先推送组件仓库改动，再修改锁定清单。server/account 的 commit 还须同步到 `.github/workflows/suite-build.yml` 对应的 `uses: ...@完整SHA`；CI 会拒绝两处不一致。客户端 common 的 pin 必须等于本次客户端提交的 gitlink；服务端 common 必须等于锁定服务端提交自己的 gitlink。版本号必须与对应 Cargo.toml 一致，不能只更新显示版本。
+
+联合发布从这些提交直接编译，**不要求组件仓库有 Release**。各仓库的独立构建与发布互不触发：
+
+| 仓库 | 只构建，不建 Release | 独立发布（可不运行） |
+| --- | --- | --- |
+| rustdesk | `Companion suite build (artifacts only)`；只验证配套组件，不编译客户端整套安装包 | 原 `*-gx.*` tag，生成包含全部组件的客户端草稿 |
+| rustdesk-server | `Fork server build (artifacts only)` | `server-v<服务端版本>-gx.N` tag，生成服务端自己的草稿 |
+| rustdesk-account-server | `Account server build (artifacts only)` | `v<账号版本>` tag，保留原独立草稿流程 |
+| hbb_common | 随所属程序编译；可在各自兼容基线用 Cargo 单独构建/测试库 | 可以自己发布源码 tag/Release；联合发布不依赖它，没有单独可安装服务 |
+
+Actions 的手动入口要求工作流已在默认分支。默认分支尚未合入时，可从当前提交推送专用构建分支，例如在客户端仓库执行 `git push origin HEAD:refs/heads/build/suite/check-001`；服务端使用 `build/server/check-001`，账号仓库使用 `build/account/check-001`。这些分支仅生成 Actions Artifacts，不创建 tag、Release 或部署。联合预览的指南名使用 `preview-<commit>`，正式发布时使用客户端 tag。
+
+部署请使用 [服务器指南](server-deployment.md) 和 [客户端填写指南](client-setup.md)。联合发布没有自动服务器升级功能；客户端更新提示仍只引导下载客户端。
+
 ## 客户端更新规则
 
 - 客户端检查官方 `rustdesk/rustdesk` 和本 fork 的 GitHub 最新正式 Release。草稿、预发布、nightly 和只有 Git tag 的版本不算正式更新。
@@ -53,6 +74,6 @@ GitHub Actions 只需自动提供的 `GITHUB_TOKEN`，权限 `contents: write`�
 - `cargo test --locked --release --lib --features flutter,hwcodec fork_update::tests` 检查更新来源、版本比较、草稿/缺包/非本 fork URL 拒绝规则。
 - `.github/scripts/fork_release.py prepare` 只允许在 CI 临时 checkout 中运行；它会修改构建文件，不用于日常开发目录。
 - 上游改变安装包名称、平台矩阵或打包脚本时，更新 `required_assets` 和对应准备逻辑。发布检查会在不匹配时拒绝补上完成标记。
-- 完成标记在所有平台构建和校验文件生成后最后上传。逐项要求 29 个构建附件，包括四种 RPM、三种 Flatpak、Arch、DRM、未签名归档及 SBOM；任一缺失或为空均不写入完成标记。工作流失败只留下草稿；客户端不会拿失败草稿更新。
+- 完成标记在客户端和配套组件均构建成功后最后上传。逐项要求 29 个客户端构建附件及 13 个组件/指南/源码清单附件，共 42 项；任一缺失或为空、组件清单与本次源码不一致，都不写入完成标记。另生成 `SHA256SUMS` 和 `fork-release.json`，正式附件共 44 项（不含 GitHub 自动源码链接）。工作流失败只留下草稿；客户端不会拿失败草稿更新。
 
 参考：[官方发布页](https://github.com/rustdesk/rustdesk/releases)、[GitHub Releases API](https://docs.github.com/en/rest/releases/releases)、[复用工作流](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows)。

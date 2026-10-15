@@ -12,7 +12,8 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-      - run: python3 -m unittest discover -s .github/scripts -p test_fork_release.py
+      - run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+      - run: python3 .github/scripts/suite.py validate
       - name: Check release workflow syntax
         run: |
-          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck='' .github/workflows/fork-ci.yml .github/workflows/fork-release.yml
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck='' .github/workflows/fork-ci.yml .github/workflows/fork-release.yml .github/workflows/suite-build.yml

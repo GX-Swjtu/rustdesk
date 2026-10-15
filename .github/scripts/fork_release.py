@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import suite
 
 ROOT = Path(__file__).resolve().parents[2]
 REPO = "GX-Swjtu/rustdesk"
@@ -101,13 +102,15 @@ def begin(tag):
                 "--title", tag + " (building)", "--notes", "构建中，请勿发布。 Build in progress; do not publish yet.")
     else:
         for asset in existing["assets"]:
-            if asset["name"].startswith("rustdesk-") or asset["name"] in ("rustdesk.sbom.json", "fork-release.json", "SHA256SUMS"):
+            if asset["name"].startswith("rustdesk-") or asset["name"] in ("rustdesk.sbom.json", "fork-release.json", "suite-components.json", "SHA256SUMS"):
                 command("gh", "api", "--method", "DELETE", f"repos/{REPO}/releases/assets/{asset['id']}")
 
 
 def normalized_name(name, base, tag):
-    if name.startswith("rustdesk-") and tag not in name:
-        name = name.replace(base, tag, 1)
+    for prefix in ("rustdesk-", "rustdesk-unattended-wayland-"):
+        if name.startswith(prefix + base + "-") and not name.startswith(prefix + tag + "-"):
+            name = prefix + tag + name[len(prefix + base):]
+            break
     if name.endswith("-signed.apk"):
         name = name[:-len("-signed.apk")] + ".apk"
     return name
@@ -127,7 +130,7 @@ def required_assets(tag):
     ]
     return {f"rustdesk-{tag}-{suffix}" for suffix in suffixes} | {
         f"rustdesk-unattended-wayland-{tag}-x86_64.deb", "rustdesk.sbom.json",
-    }
+    } | suite.required_assets(tag)
 
 
 def digest(file):
@@ -160,12 +163,15 @@ def notes(tag, upstream, assets):
              "iOS is an unsigned Xcode archive requiring your own Apple signing. The legacy Web build in this repository is disabled upstream; no official Web/App Store links are presented as fork downloads.",
              "首次从官方版或本地测试 APK 切换时，签名不同可能需要卸载。先备份设置。后续本 fork APK 使用同一签名升级。",
              "When migrating from official or locally signed APKs, a different signature may require uninstalling first. Back up settings. Subsequent fork APKs retain the same signing identity.",
+             f"服务端部署 / Server deployment: [指南](https://github.com/{REPO}/blob/{tag}/docs/server-deployment.md). 客户端填写 / Client setup: [指南](https://github.com/{REPO}/blob/{tag}/docs/client-setup.md). 离线指南包含在 `rustdesk-{tag}-server-guide.zip`。",
+             "配套 hbbs/hbbr、账号服务及两套 hbb_common 基线随本版一起提供；精确提交见 `suite-components.json`。服务器需要手动部署，客户端更新不会自动升级服务器。 Companion servers and both common-library sources are pinned in suite-components.json; deploy servers separately.",
              "## 下载 / Downloads", "| 文件 / File | 下载 / Download |", "| --- | --- |"]
     for name in sorted(assets):
         if name not in ("fork-release.json", "SHA256SUMS"):
             lines.append(f"| `{name}` | [Download](https://github.com/{REPO}/releases/download/{tag}/{name}) |")
     lines += ["", "## 校验 / Verification", "`SHA256SUMS` contains SHA-256 for every build asset. `fork-release.json` records the source commit and completed build inventory."]
-    return "\n\n".join(lines[:11]) + "\n" + "\n".join(lines[11:]) + "\n"
+    split = lines.index("## 下载 / Downloads") + 1
+    return "\n\n".join(lines[:split]) + "\n" + "\n".join(lines[split:]) + "\n"
 
 
 def finalize(tag, destination):
@@ -182,6 +188,9 @@ def finalize(tag, destination):
         raise ValueError("Empty or duplicate release assets")
     destination.mkdir(parents=True, exist_ok=True)
     command("gh", "release", "download", tag, "--repo", REPO, "--dir", str(destination))
+    source_commit = command("git", "rev-parse", "HEAD")
+    if json.loads((destination / "suite-components.json").read_text(encoding="utf-8")) != suite.manifest(tag, source_commit):
+        raise ValueError("Companion assets do not match this release's pinned source manifest")
     inventory = []
     for asset in assets:
         original = asset["name"]
@@ -196,7 +205,7 @@ def finalize(tag, destination):
     body.write_text(notes(tag, upstream, names), encoding="utf-8")
     manifest = destination / "fork-release.json"
     manifest.write_text(json.dumps({"schema": 1, "version": tag, "upstream": upstream,
-        "commit": command("git", "rev-parse", "HEAD"), "assets": inventory}, indent=2) + "\n", encoding="utf-8")
+        "commit": source_commit, "components": suite.load(), "assets": inventory}, indent=2) + "\n", encoding="utf-8")
     command("gh", "release", "edit", tag, "--repo", REPO, "--draft", "--prerelease=false", "--title", "RustDesk GX " + tag, "--notes-file", str(body))
     command("gh", "release", "upload", tag, str(sums), "--repo", REPO, "--clobber")
     # Upload this last: without it clients cannot offer this release as an update.

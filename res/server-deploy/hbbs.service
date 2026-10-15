@@ -1,0 +1,25 @@
+[Unit]
+Description=RustDesk GX ID and Native P2P coordination server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=rustdesk-server
+Group=rustdesk-server
+WorkingDirectory=/var/lib/rustdesk-server
+# Replace rd.example.com before starting. Preserve existing ports on upgrades.
+ExecStart=/opt/rustdesk-server/bin/hbbs -p 21116 -r rd.example.com:21117 -k _
+Environment=NATIVE_P2P=Y
+Environment=HBBS_ACCOUNT_HANDSHAKE=Y
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/rustdesk-server
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

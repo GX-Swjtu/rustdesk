@@ -1,3 +1,19 @@
+# RustDesk GX：与官方版本的差异
+
+这是 `GX-Swjtu/rustdesk` 独立 fork。官方 RustDesk 本身支持 P2P；本 fork 主要增加配套 hbbs 协调的 Native UDP/KCP 打洞，以及 Windows/Linux Flutter、Android 图形连接中的连续等待、诊断和人工选择中继。
+
+- 单轮最多约 60 秒，暂时失败按退避间隔继续尝试；明确拒绝或无法继续时等待用户选择。可以随时点击“中继连接”或取消，不因一次超时就静默转中继。
+- 关闭 Native P2P、配置显式代理/WebSocket 或强制中继时走对应原路径。Sciter、CLI/有限诊断保留一次尝试与回退；macOS/iOS 不提供新增的 Native P2P 等待控制器。直连成功仍取决于网络环境。
+- 可选独立账号服务支持登录、设备列表与地址簿，配合 hbbs 加密握手使用；不是官方 Server Pro，也不代替远控密码和被控端授权。
+- 联合 Release 提供客户端、hbbs/hbbr、账号服务、各自对应的 hbb_common 源码和部署指南。组件按完整提交固定，各仓库仍可独立构建/发布，也可只参加联合发布。
+- 上游新版本只通知；管理员完成合并、构建并手动发布本 fork 后，客户端才提供本 fork 的下载入口。不会自动部署服务器或迁移账号数据库。
+
+[本 fork 下载](https://github.com/GX-Swjtu/rustdesk/releases) · [服务器部署](server-deployment.md) · [客户端填写](client-setup.md) · [构建发布流程](fork-release.md)
+
+下方保留原版介绍；其中官方商店、下载和 Pro 链接不代表本 fork 的构建产物。
+
+---
+
 <p align="center">
   <img src="../res/logo-header.svg" alt="RustDesk - Your remote desktop"><br>
   <a href="#免费的公共服务器">服务器</a> •

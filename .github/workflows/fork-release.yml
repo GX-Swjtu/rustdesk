@@ -36,7 +36,9 @@ jobs:
             exit 1
           }
       - name: Test release policy
-        run: python3 -m unittest discover -s .github/scripts -p test_fork_release.py
+        run: |
+          python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+          python3 .github/scripts/suite.py validate
       - name: Validate source and create unpublished draft
         id: version
         env:
@@ -56,14 +58,40 @@ jobs:
       fork-release: ${{ github.ref_name }}
       fork-base-version: ${{ needs.prepare.outputs.base }}
 
+  companions:
+    needs: prepare
+    uses: ./.github/workflows/suite-build.yml
+    with:
+      release-tag: ${{ github.ref_name }}
+
   finalize:
-    needs: [prepare, build]
+    needs: [prepare, build, companions]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: server-*
+          merge-multiple: true
+          path: component-assets
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: account-*
+          merge-multiple: true
+          path: component-assets
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: suite-*
+          merge-multiple: true
+          path: component-assets
+      - name: Attach companion packages to this client draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORK_RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release upload "$FORK_RELEASE_TAG" component-assets/* --repo "$GITHUB_REPOSITORY" --clobber
       - name: Check all packages, generate checksums and bilingual release notes
         env:
           GH_TOKEN: ${{ github.token }}
