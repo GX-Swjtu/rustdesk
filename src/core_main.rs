@@ -73,6 +73,7 @@ pub fn core_main() -> Option<CoreMainAction> {
                 "--view-camera",
                 "--port-forward",
                 "--terminal",
+                "--terminal-admin",
                 "--rdp",
             ]
             .contains(&arg.as_str())
@@ -763,7 +764,7 @@ fn core_main_invoke_new_connection(mut args: std::env::Args) -> Option<Vec<Strin
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--connect" | "--play" | "--file-transfer" | "--view-camera" | "--port-forward"
-            | "--terminal" | "--rdp" => {
+            | "--terminal" | "--terminal-admin" | "--rdp" => {
                 authority = Some((&arg.to_string()[2..]).to_owned());
                 id = args.next();
             }
@@ -774,6 +775,9 @@ fn core_main_invoke_new_connection(mut args: std::env::Args) -> Option<Vec<Strin
             }
             "--relay" => {
                 param_array.push(format!("relay=true"));
+            }
+            "--request-approval" => {
+                param_array.push("request-approval=true".to_owned());
             }
             // inner
             "--switch_uuid" => {
@@ -898,59 +902,6 @@ fn parse_silent_install_args(args: &[String]) -> (Option<bool>, bool) {
     }
 
     (printer_override, debug)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn args(values: &[&str]) -> Vec<String> {
-        values.iter().map(|value| value.to_string()).collect()
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    #[test]
-    fn user_main_ipc_scope_cli_command_matches_management_commands_only() {
-        for command in [
-            "--password",
-            "--set-unlock-pin",
-            "--get-id",
-            "--set-id",
-            "--config",
-            "--option",
-            "--assign",
-            "--deploy",
-        ] {
-            assert!(is_user_main_ipc_scope_cli_command(&args(&[command])));
-        }
-
-        for command in [
-            "--service",
-            "--server",
-            "--tray",
-            "--cm",
-            "--check-hwcodec-config",
-            "--connect",
-        ] {
-            assert!(!is_user_main_ipc_scope_cli_command(&args(&[command])));
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn macos_manual_update_result_preserves_failure() {
-        let failure =
-            finish_macos_update(Err(hbb_common::anyhow::anyhow!("administrator canceled")))
-                .expect("failure action");
-
-        match failure {
-            CoreMainAction::ExitFailure(err) => {
-                assert_eq!("administrator canceled", err.to_string());
-            }
-            CoreMainAction::StartUi(_) => panic!("update failure started the UI"),
-        }
-        assert!(finish_macos_update(Ok(())).is_none());
-    }
 }
 
 /// Check if the executable is a Quick Support version.

@@ -72,8 +72,10 @@ class TerminalPage extends StatefulWidget {
     required this.isSharedPassword,
     this.forceRelay,
     this.connToken,
+    this.loginMethod = '',
   }) : super(key: key);
   final String id;
+  final String loginMethod;
   final String? password;
   final bool? forceRelay;
   final bool? isSharedPassword;
@@ -142,6 +144,7 @@ class _TerminalPageState extends State<TerminalPage>
     // Use shared FFI instance from connection manager
     _ffi = TerminalConnectionManager.getConnection(
       peerId: widget.id,
+      loginMethod: widget.loginMethod,
       password: widget.password,
       isSharedPassword: widget.isSharedPassword,
       forceRelay: widget.forceRelay,

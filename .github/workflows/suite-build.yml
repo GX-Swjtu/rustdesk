@@ -23,7 +23,7 @@ jobs:
         run: echo "lock=$(python3 .github/scripts/suite.py validate)" >> "$GITHUB_OUTPUT"
   server:
     needs: pins
-    uses: GX-Swjtu/rustdesk-server/.github/workflows/fork-build.yml@839642093887cbb8f4d4acefaf95e6a0a757838a
+    uses: GX-Swjtu/rustdesk-server/.github/workflows/fork-build.yml@23d2fb575cc1d7555668d5aa46cb3f3f3a6aac90
     with:
       source-ref: ${{ fromJSON(needs.pins.outputs.lock).server.commit }}
   account:
