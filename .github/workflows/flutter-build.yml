@@ -395,8 +395,9 @@ jobs:
         run: |
           cargo test --locked --release -p rustdesk-native-p2p --lib
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Integration tests share process-wide settings and the native attempt semaphore.
           foreach ($filter in @('fork_update::tests', 'native_p2p', 'port_forward', 'self_connection')) {
-            cargo test --locked --release --lib --features flutter,hwcodec $filter
+            cargo test --locked --release --lib --features flutter,hwcodec $filter -- --test-threads=1
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
