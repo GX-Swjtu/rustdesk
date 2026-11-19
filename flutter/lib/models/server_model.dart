@@ -135,6 +135,7 @@ class ServerModel with ChangeNotifier {
   ServerModel(this.parent) {
     _emptyIdShow = translate("Generating ...");
     _serverId = IDTextEditingController(text: _emptyIdShow);
+    if (isAndroid && bind.isOutgoingOnly()) return;
 
     /*
     // initital _hideCm at startup
@@ -440,6 +441,7 @@ class ServerModel with ChangeNotifier {
 
   /// Start the screen sharing service.
   Future<void> startService() async {
+    if (isAndroid && bind.isOutgoingOnly()) return;
     _isStart = true;
     notifyListeners();
     parent.target?.ffiModel.updateEventListener(parent.target!.sessionId, "");

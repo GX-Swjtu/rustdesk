@@ -55,6 +55,11 @@ fn initialize(app_dir: &str, custom_client_config: &str) {
     }
     #[cfg(target_os = "android")]
     {
+        // Apply the APK's role after loading custom settings, including on upgrades.
+        config::HARD_SETTINGS
+            .write()
+            .unwrap()
+            .insert("conn-type".into(), "outgoing".into());
         // flexi_logger can't work when android_logger initialized.
         #[cfg(debug_assertions)]
         android_logger::init_once(
@@ -2198,22 +2203,10 @@ pub fn main_get_data_dir_ios(app_dir: String) -> SyncReturn<String> {
     SyncReturn(data_dir.to_string_lossy().to_string())
 }
 
-pub fn main_stop_service() {
-    #[cfg(target_os = "android")]
-    {
-        config::Config::set_option("stop-service".into(), "Y".into());
-        crate::rendezvous_mediator::RendezvousMediator::restart();
-    }
-}
+// Kept in the cross-platform Flutter bridge ABI.
+pub fn main_stop_service() {}
 
-pub fn main_start_service() {
-    #[cfg(target_os = "android")]
-    {
-        config::Config::set_option("stop-service".into(), "".into());
-        crate::rendezvous_mediator::reset_needs_deploy_notification();
-        crate::rendezvous_mediator::RendezvousMediator::restart();
-    }
-}
+pub fn main_start_service() {}
 
 pub fn main_update_temporary_password() {
     update_temporary_password();
@@ -3067,75 +3060,9 @@ pub fn session_get_common(
 }
 
 #[cfg(target_os = "android")]
-pub mod server_side {
-    use hbb_common::{config, log};
-    use jni::{
-        errors::{Error as JniError, Result as JniResult},
-        objects::{JClass, JObject, JString},
-        sys::{jboolean, jstring},
-        JNIEnv,
-    };
-
-    use crate::start_server;
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_ffi_FFI_startServer(
-        env: JNIEnv,
-        _class: JClass,
-        app_dir: JString,
-        home_dir: JString,
-        custom_client_config: JString,
-    ) {
-        log::debug!("startServer from jvm");
-        let mut env = env;
-        if let Ok(app_dir) = env.get_string(&app_dir) {
-            *config::APP_DIR.write().unwrap() = app_dir.into();
-        }
-        if let Ok(home_dir) = env.get_string(&home_dir) {
-            *config::APP_HOME_DIR.write().unwrap() = home_dir.into();
-        }
-        #[cfg(not(debug_assertions))]
-        crate::platform::android_log::initialize();
-        if let Ok(custom_client_config) = env.get_string(&custom_client_config) {
-            if !custom_client_config.is_empty() {
-                let custom_client_config: String = custom_client_config.into();
-                crate::read_custom_client(&custom_client_config);
-            }
-        }
-        std::thread::spawn(move || start_server(true));
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_ffi_FFI_startService(_env: JNIEnv, _class: JClass) {
-        log::debug!("startService from jvm");
-        config::Config::set_option("stop-service".into(), "".into());
-        crate::rendezvous_mediator::reset_needs_deploy_notification();
-        crate::rendezvous_mediator::RendezvousMediator::restart();
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_ffi_FFI_translateLocale(
-        env: JNIEnv,
-        _class: JClass,
-        locale: JString,
-        input: JString,
-    ) -> jstring {
-        let mut env = env;
-        let res = if let (Ok(input), Ok(locale)) = (env.get_string(&input), env.get_string(&locale))
-        {
-            let input: String = input.into();
-            let locale: String = locale.into();
-            crate::client::translate_locale(input, &locale)
-        } else {
-            "".into()
-        };
-        return env.new_string(res).unwrap_or(input).into_raw();
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_ffi_FFI_refreshScreen(_env: JNIEnv, _class: JClass) {
-        crate::server::video_service::refresh()
-    }
+mod android_activity {
+    use hbb_common::log;
+    use jni::{objects::JClass, JNIEnv};
 
     /// Close outgoing sessions when the UI goes away but the process may not,
     /// so a session cannot outlive the UI that is able to close it.
@@ -3147,45 +3074,6 @@ pub mod server_side {
         }
     }
 
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_ffi_FFI_getLocalOption(
-        env: JNIEnv,
-        _class: JClass,
-        key: JString,
-    ) -> jstring {
-        let mut env = env;
-        let res = if let Ok(key) = env.get_string(&key) {
-            let key: String = key.into();
-            super::get_local_option(key)
-        } else {
-            "".into()
-        };
-        return env.new_string(res).unwrap_or_default().into_raw();
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_ffi_FFI_getBuildinOption(
-        env: JNIEnv,
-        _class: JClass,
-        key: JString,
-    ) -> jstring {
-        let mut env = env;
-        let res = if let Ok(key) = env.get_string(&key) {
-            let key: String = key.into();
-            super::get_builtin_option(&key)
-        } else {
-            "".into()
-        };
-        return env.new_string(res).unwrap_or_default().into_raw();
-    }
-
-    #[no_mangle]
-    pub unsafe extern "system" fn Java_ffi_FFI_isServiceClipboardEnabled(
-        env: JNIEnv,
-        _class: JClass,
-    ) -> jboolean {
-        jboolean::from(crate::server::is_clipboard_service_ok())
-    }
 }
 
 #[cfg(test)]

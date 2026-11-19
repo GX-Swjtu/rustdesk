@@ -23,6 +23,20 @@ Actions 的手动入口要求工作流已在默认分支。默认分支尚未合
 
 部署请使用 [服务器指南](server-deployment.md) 和 [客户端填写指南](client-setup.md)。联合发布没有自动服务器升级功能；客户端更新提示仍只引导下载客户端。
 
+## Android 主控端
+
+Android 安装包的名称为 GxDesk，应用 ID 为 `com.gxdesk.android`。Kotlin 命名空间与上游一致，已有的 `rustdesk://` 链接继续可用。GxDesk 可与旧包并存，两者的设置独立。
+
+Android 安装包仅支持从手机主动连接其他设备。合并上游时，录屏、无障碍输入、开机启动及悬浮窗的改动应落在 `flutter/android/app/src/upstreamHost/`。Gradle 的应用构建不使用这个目录。主动连接使用的麦克风、剪贴板、文件选择器和网络接口保留在 `src/main/`。
+
+发布检查会读取每个 ABI 和通用 APK 的合并清单、DEX 和 Rust 动态库。上游新增 Android 服务、权限或 JNI 导出时，请核对它们是否属于主控功能，并同步检查规则。
+
+Android 合并时重点复核以下路径。
+
+- `flutter/android/app/build.gradle`、应用清单和资源决定系统包名、可启动组件及 APK 依赖。Kotlin 的 `MainActivity`、`AudioRecordHandle`、`RdClipboardManager`、`common.kt` 和 `ffi.kt` 保留主控会话、文件选择、麦克风通话和剪贴板。
+- `src/flutter_ffi.rs`、`src/server.rs`、`src/rendezvous_mediator.rs` 和 `libs/scrap/src/android/ffi.rs` 控制 Android 原生宿主入口。语音使用部分共享音频代码，接收画面使用共享解码库。
+- Flutter 的移动主页、远控页、摄像头页和 `server_model`、`chat_model`、`shortcut_model` 控制主控界面和通话权限。Rust 的 `common`、`ui_interface` 和 `lang` 提供显示名称。Flutter 的 `main.dart` 和 `common.dart` 处理启动参数与深链接，日志应避免包含原始参数、连接链接或口令。
+
 ## 客户端更新规则
 
 - 客户端检查官方 `rustdesk/rustdesk` 和本 fork 的 GitHub 最新正式 Release。草稿、预发布、nightly 和只有 Git tag 的版本不算正式更新。
@@ -66,7 +80,7 @@ GitHub Actions 只需自动提供的 `GITHUB_TOKEN`，权限 `contents: write`�
 | ANDROID_KEY_STORE_PASSWORD | 密钥库密码 |
 | ANDROID_KEY_PASSWORD | 私钥密码 |
 
-签名密钥和密码不得提交 Git。首次切换官方或本地测试 APK 可能因签名不同需要卸载，必须先备份设置。以后全部 fork 发布保持同一签名。发布工作流只生成安装文件和草稿，绝不升级运行中的客户端、hbbs、hbbr、账号服务或数据库。
+签名密钥和密码不得提交 Git。旧包与 GxDesk 可以并存。若已装同 ID 的本地测试 APK，请先备份设置，签名不同时需卸载测试包。以后全部 fork 发布保持同一签名。发布工作流只生成安装文件和草稿，绝不升级运行中的客户端、hbbs、hbbr、账号服务或数据库。
 
 ## 维护与检查
 

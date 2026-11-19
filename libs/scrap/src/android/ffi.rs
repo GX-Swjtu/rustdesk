@@ -21,18 +21,14 @@ use std::time::{Duration, Instant};
 
 lazy_static! {
     static ref JVM: RwLock<Option<JavaVM>> = RwLock::new(None);
-    static ref MAIN_SERVICE_CTX: RwLock<Option<GlobalRef>> = RwLock::new(None); // MainService -> video service / audio service / info
     static ref APPLICATION_CONTEXT: RwLock<Option<GlobalRef>> = RwLock::new(None);
-    static ref VIDEO_RAW: Mutex<FrameRaw> = Mutex::new(FrameRaw::new("video", MAX_VIDEO_FRAME_TIMEOUT));
     static ref AUDIO_RAW: Mutex<FrameRaw> = Mutex::new(FrameRaw::new("audio", MAX_AUDIO_FRAME_TIMEOUT));
     static ref NDK_CONTEXT_INITED: Mutex<bool> = Default::default();
     static ref MEDIA_CODEC_INFOS: RwLock<Option<MediaCodecInfos>> = RwLock::new(None);
     static ref CLIPBOARD_MANAGER: RwLock<Option<GlobalRef>> = RwLock::new(None);
-    static ref CLIPBOARDS_HOST: Mutex<Option<MultiClipboards>> = Mutex::new(None);
     static ref CLIPBOARDS_CLIENT: Mutex<Option<MultiClipboards>> = Mutex::new(None);
 }
 
-const MAX_VIDEO_FRAME_TIMEOUT: Duration = Duration::from_millis(100);
 const MAX_AUDIO_FRAME_TIMEOUT: Duration = Duration::from_millis(1000);
 
 struct FrameRaw {
@@ -93,8 +89,8 @@ impl FrameRaw {
     }
 }
 
-pub fn get_video_raw<'a>(dst: &mut Vec<u8>, last: &mut Vec<u8>) -> Option<()> {
-    VIDEO_RAW.lock().ok()?.take(dst, last)
+pub fn get_video_raw(_dst: &mut Vec<u8>, _last: &mut Vec<u8>) -> Option<()> {
+    None
 }
 
 pub fn get_audio_raw<'a>(dst: &mut Vec<u8>, last: &mut Vec<u8>) -> Option<()> {
@@ -105,21 +101,7 @@ pub fn get_clipboards(client: bool) -> Option<MultiClipboards> {
     if client {
         CLIPBOARDS_CLIENT.lock().ok()?.take()
     } else {
-        CLIPBOARDS_HOST.lock().ok()?.take()
-    }
-}
-
-#[no_mangle]
-pub extern "system" fn Java_ffi_FFI_onVideoFrameUpdate(
-    env: JNIEnv,
-    _class: JClass,
-    buffer: JObject,
-) {
-    let jb = JByteBuffer::from(buffer);
-    if let Ok(data) = env.get_direct_buffer_address(&jb) {
-        if let Ok(len) = env.get_direct_buffer_capacity(&jb) {
-            VIDEO_RAW.lock().unwrap().update(data, len);
-        }
+        None
     }
 }
 
@@ -146,12 +128,9 @@ pub extern "system" fn Java_ffi_FFI_onClipboardUpdate(
     if let Ok(data) = env.get_direct_buffer_address(&buffer) {
         if let Ok(len) = env.get_direct_buffer_capacity(&buffer) {
             let data = unsafe { std::slice::from_raw_parts(data, len) };
-            if let Ok(clips) = MultiClipboards::parse_from_bytes(&data[1..]) {
-                let is_client = data[0] == 1;
-                if is_client {
+            if data.first() == Some(&1) {
+                if let Ok(clips) = MultiClipboards::parse_from_bytes(&data[1..]) {
                     *CLIPBOARDS_CLIENT.lock().unwrap() = Some(clips);
-                } else {
-                    *CLIPBOARDS_HOST.lock().unwrap() = Some(clips);
                 }
             }
         }
@@ -169,30 +148,10 @@ pub extern "system" fn Java_ffi_FFI_setFrameRawEnable(
     if let Ok(name) = env.get_string(&name) {
         let name: String = name.into();
         let value = value.eq(&1);
-        if name.eq("video") {
-            VIDEO_RAW.lock().unwrap().set_enable(value);
-        } else if name.eq("audio") {
+        if name.eq("audio") {
             AUDIO_RAW.lock().unwrap().set_enable(value);
         }
     };
-}
-
-#[no_mangle]
-pub extern "system" fn Java_ffi_FFI_init(env: JNIEnv, _class: JClass, ctx: JObject) {
-    log::debug!("MainService init from java");
-    if let Ok(jvm) = env.get_java_vm() {
-        let java_vm = jvm.get_java_vm_pointer() as *mut c_void;
-        let mut jvm_lock = JVM.write().unwrap();
-        if jvm_lock.is_none() {
-            *jvm_lock = Some(jvm);
-        }
-        drop(jvm_lock);
-        if let Ok(context) = env.new_global_ref(ctx) {
-            let context_jobject = context.as_obj().as_raw() as *mut c_void;
-            *MAIN_SERVICE_CTX.write().unwrap() = Some(context);
-            init_ndk_context(java_vm, context_jobject);
-        }
-    }
 }
 
 #[no_mangle]
@@ -242,17 +201,6 @@ pub struct MediaCodecInfos {
     pub codecs: Vec<MediaCodecInfo>,
 }
 
-#[no_mangle]
-pub extern "system" fn Java_ffi_FFI_setCodecInfo(env: JNIEnv, _class: JClass, info: JString) {
-    let mut env = env;
-    if let Ok(info) = env.get_string(&info) {
-        let info: String = info.into();
-        if let Ok(infos) = serde_json::from_str::<MediaCodecInfos>(&info) {
-            *MEDIA_CODEC_INFOS.write().unwrap() = Some(infos);
-        }
-    }
-}
-
 pub fn get_codec_info() -> Option<MediaCodecInfos> {
     MEDIA_CODEC_INFOS.read().unwrap().as_ref().cloned()
 }
@@ -261,67 +209,13 @@ pub fn clear_codec_info() {
     *MEDIA_CODEC_INFOS.write().unwrap() = None;
 }
 
-// another way to fix "reference table overflow" error caused by new_string and call_main_service_pointer_input frequently calld
-// is below, but here I change kind from string to int for performance
-/*
-        env.with_local_frame(10, || {
-            let kind = env.new_string(kind)?;
-            env.call_method(
-                ctx,
-                "rustPointerInput",
-                "(Ljava/lang/String;III)V",
-                &[
-                    JValue::Object(&JObject::from(kind)),
-                    JValue::Int(mask),
-                    JValue::Int(x),
-                    JValue::Int(y),
-                ],
-            )?;
-            Ok(JObject::null())
-        })?;
-*/
-pub fn call_main_service_pointer_input(kind: &str, mask: i32, x: i32, y: i32) -> JniResult<()> {
-    if let (Some(jvm), Some(ctx)) = (
-        JVM.read().unwrap().as_ref(),
-        MAIN_SERVICE_CTX.read().unwrap().as_ref(),
-    ) {
-        let mut env = jvm.attach_current_thread_as_daemon()?;
-        let kind = if kind == "touch" { 0 } else { 1 };
-        env.call_method(
-            ctx,
-            "rustPointerInput",
-            "(IIII)V",
-            &[
-                JValue::Int(kind),
-                JValue::Int(mask),
-                JValue::Int(x),
-                JValue::Int(y),
-            ],
-        )?;
-        return Ok(());
-    } else {
-        return Err(JniError::ThrowFailed(-1));
-    }
+// Shared server code also builds for Android. This APK has no Android host service.
+pub fn call_main_service_pointer_input(_: &str, _: i32, _: i32, _: i32) -> JniResult<()> {
+    Err(JniError::NullPtr("Android host service"))
 }
 
-pub fn call_main_service_key_event(data: &[u8]) -> JniResult<()> {
-    if let (Some(jvm), Some(ctx)) = (
-        JVM.read().unwrap().as_ref(),
-        MAIN_SERVICE_CTX.read().unwrap().as_ref(),
-    ) {
-        let mut env = jvm.attach_current_thread_as_daemon()?;
-        let data = env.byte_array_from_slice(data)?;
-
-        env.call_method(
-            ctx,
-            "rustKeyEventInput",
-            "([B)V",
-            &[JValue::Object(&JObject::from(data))],
-        )?;
-        return Ok(());
-    } else {
-        return Err(JniError::ThrowFailed(-1));
-    }
+pub fn call_main_service_key_event(_: &[u8]) -> JniResult<()> {
+    Err(JniError::NullPtr("Android host service"))
 }
 
 fn _call_clipboard_manager<S, T>(name: S, sig: T, args: &[JValue]) -> JniResult<()>
@@ -369,72 +263,13 @@ pub fn call_clipboard_manager_enable_client_clipboard(enable: bool) -> JniResult
     )
 }
 
-pub fn call_main_service_get_by_name(name: &str) -> JniResult<String> {
-    if let (Some(jvm), Some(ctx)) = (
-        JVM.read().unwrap().as_ref(),
-        MAIN_SERVICE_CTX.read().unwrap().as_ref(),
-    ) {
-        let mut env = jvm.attach_current_thread_as_daemon()?;
-        let res = env.with_local_frame(10, |env| -> JniResult<String> {
-            let name = env.new_string(name)?;
-            let res = env
-                .call_method(
-                    ctx,
-                    "rustGetByName",
-                    "(Ljava/lang/String;)Ljava/lang/String;",
-                    &[JValue::Object(&JObject::from(name))],
-                )?
-                .l()?;
-            let res = JString::from(res);
-            let res = env.get_string(&res)?;
-            let res = res.to_string_lossy().to_string();
-            Ok(res)
-        })?;
-        Ok(res)
-    } else {
-        return Err(JniError::ThrowFailed(-1));
-    }
+pub fn call_main_service_get_by_name(_: &str) -> JniResult<String> {
+    Err(JniError::NullPtr("Android host service"))
 }
 
-pub fn call_main_service_set_by_name(
-    name: &str,
-    arg1: Option<&str>,
-    arg2: Option<&str>,
-) -> JniResult<()> {
-    if let (Some(jvm), Some(ctx)) = (
-        JVM.read().unwrap().as_ref(),
-        MAIN_SERVICE_CTX.read().unwrap().as_ref(),
-    ) {
-        let mut env = jvm.attach_current_thread_as_daemon()?;
-        env.with_local_frame(10, |env| -> JniResult<()> {
-            let name = env.new_string(name)?;
-            let arg1 = env.new_string(arg1.unwrap_or(""))?;
-            let arg2 = env.new_string(arg2.unwrap_or(""))?;
-
-            env.call_method(
-                ctx,
-                "rustSetByName",
-                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
-                &[
-                    JValue::Object(&JObject::from(name)),
-                    JValue::Object(&JObject::from(arg1)),
-                    JValue::Object(&JObject::from(arg2)),
-                ],
-            )?;
-            Ok(())
-        })?;
-        return Ok(());
-    } else {
-        return Err(JniError::ThrowFailed(-1));
-    }
+pub fn call_main_service_set_by_name(_: &str, _: Option<&str>, _: Option<&str>) -> JniResult<()> {
+    Err(JniError::NullPtr("Android host service"))
 }
-
-// Difference between MainService, MainActivity, JNI_OnLoad:
-//  jvm is the same, ctx is differen and ctx of JNI_OnLoad is null.
-//  cpal: all three works
-//  Service(GetByName, ...): only ctx from MainService works, so use 2 init context functions
-// On app start: JNI_OnLoad or MainActivity init context
-// On service start first time: MainService replace the context
 
 fn init_ndk_context(java_vm: *mut c_void, context_jobject: *mut c_void) {
     let mut lock = NDK_CONTEXT_INITED.lock().unwrap();
@@ -498,6 +333,7 @@ pub extern "system" fn Java_ffi_FFI_onAppStart(mut env: JNIEnv, _class: JClass, 
             if let Err(error) = base::fs::android::initialize(call_document_storage) {
                 log::error!("Unable to initialize document storage: {}", error);
             }
+            init_ndk_context(java_vm, context_jobject);
             try_init_rustls_platform_verifier(&mut env, context_jobject);
         }
     }

@@ -6,7 +6,6 @@ import android.Manifest
 import android.content.Context
 import android.media.*
 import android.content.pm.PackageManager
-import android.media.projection.MediaProjection
 import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
 import android.os.Build
@@ -17,7 +16,7 @@ const val AUDIO_ENCODING = AudioFormat.ENCODING_PCM_FLOAT //  ENCODING_OPUS need
 const val AUDIO_SAMPLE_RATE = 48000
 const val AUDIO_CHANNEL_MASK = AudioFormat.CHANNEL_IN_STEREO
 
-class AudioRecordHandle(private var context: Context, private var isVideoStart: ()->Boolean, private var isAudioStart: ()->Boolean) {
+class AudioRecordHandle(private val context: Context) {
     companion object {
         private const val LOG_TAG = "LOG_AUDIO_RECORD_HANDLE"
         private const val NO_ACTIVE_PUBLISHERS = 0
@@ -49,12 +48,11 @@ class AudioRecordHandle(private var context: Context, private var isVideoStart: 
     private var audioRecorder: AudioRecord? = null
     private var audioReader: AudioReader? = null
     private var minBufferSize = 0
-    private var audioRecordStat = false
+    @Volatile private var audioRecordStat = false
     private var audioThread: Thread? = null
-    private var playbackCapturePending = false
 
     @RequiresApi(Build.VERSION_CODES.M)
-    fun createAudioRecorder(inVoiceCall: Boolean, mediaProjection: MediaProjection?): Boolean {
+    private fun createAudioRecorder(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             return false
         }
@@ -67,28 +65,14 @@ class AudioRecordHandle(private var context: Context, private var isVideoStart: 
             return false
         }
 
-        var builder = AudioRecord.Builder()
+        val builder = AudioRecord.Builder()
         .setAudioFormat(
             AudioFormat.Builder()
                 .setEncoding(AUDIO_ENCODING)
                 .setSampleRate(AUDIO_SAMPLE_RATE)
                 .setChannelMask(AUDIO_CHANNEL_MASK).build()
         );
-        if (inVoiceCall) {
-            builder.setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
-        } else {
-            mediaProjection?.let {
-                var apcc = AudioPlaybackCaptureConfiguration.Builder(it)
-                .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
-                .addMatchingUsage(AudioAttributes.USAGE_ALARM)
-                .addMatchingUsage(AudioAttributes.USAGE_GAME)
-                .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN).build();
-                builder.setAudioPlaybackCaptureConfig(apcc);
-            } ?: let {
-                Log.d(logTag, "createAudioRecorder failed, mediaProjection null")
-                return false
-            }
-        }
+        builder.setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
         val recorder = try {
             builder.build()
         } catch (e: Exception) {
@@ -149,7 +133,7 @@ class AudioRecordHandle(private var context: Context, private var isVideoStart: 
     }
 
     @RequiresApi(Build.VERSION_CODES.M)
-    fun startAudioRecorder(): Boolean {
+    private fun startAudioRecorder(): Boolean {
         val recorder = audioRecorder
         if (recorder == null) {
             Log.d(logTag, "startAudioRecorder fail")
@@ -190,95 +174,15 @@ class AudioRecordHandle(private var context: Context, private var isVideoStart: 
         }
     }
 
-    fun isVoiceCallActive(): Boolean {
-        return audioRecorder?.audioSource == MediaRecorder.AudioSource.VOICE_COMMUNICATION
+    fun start(): Boolean {
+        if (audioRecordStat) return true
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
+        return createAudioRecorder() && startAudioRecorder()
     }
 
-    fun getVoiceCallStartError(): String {
-        return if (ActivityCompat.checkSelfPermission(
-            context,
-            Manifest.permission.RECORD_AUDIO
-        ) != PackageManager.PERMISSION_GRANTED) {
-            "To start a voice call, enable \"Audio capture\" on the \"Share screen\" page."
-        } else {
-            "Failed to start voice call."
-        }
-    }
-
-    fun onVoiceCallStarted(mediaProjection: MediaProjection?): Boolean {
-        if (!isSupportVoiceCall()) {
-            return false
-        }
-        // No need to check if video or audio is started here.
-        if (!switchToVoiceCall(mediaProjection)) {
-            return false
-        }
-        return true
-    }
-
-    fun onVoiceCallClosed(mediaProjection: MediaProjection?): Boolean {
-        // Return true if not supported, because is was not started.
-        if (!isSupportVoiceCall()) {
-            return true
-        }
-        val switched = !isVideoStart() || switchOutVoiceCall(mediaProjection)
-        tryReleaseAudio()
-        return switched
-    }
-
-    @RequiresApi(Build.VERSION_CODES.M)
-    fun switchToVoiceCall(mediaProjection: MediaProjection?): Boolean {
-        audioRecorder?.let {
-            if (it.getAudioSource() == MediaRecorder.AudioSource.VOICE_COMMUNICATION) {
-                return true
-            }
-            playbackCapturePending = true
-        }
+    fun stop() {
         audioRecordStat = false
         audioThread?.join()
         audioThread = null
-
-        if (!createAudioRecorder(true, mediaProjection)) {
-            Log.e(logTag, "createAudioRecorder fail")
-            return false
-        }
-        return startAudioRecorder()
-    }
-
-    @RequiresApi(Build.VERSION_CODES.M)
-    fun switchOutVoiceCall(mediaProjection: MediaProjection?): Boolean {
-        if (!isVoiceCallActive() && !playbackCapturePending) {
-            return true
-        }
-        playbackCapturePending = true
-        audioRecordStat = false
-        audioThread?.join()
-
-        if (!createAudioRecorder(false, mediaProjection)) {
-            Log.e(logTag, "createAudioRecorder fail")
-            return false
-        }
-        val started = startAudioRecorder()
-        if (started) {
-            playbackCapturePending = false
-        }
-        return started
-    }
-
-    fun tryReleaseAudio() {
-        if (isAudioStart() || isVideoStart()) {
-            return
-        }
-        audioRecordStat = false
-        audioThread?.join()
-        audioThread = null
-        playbackCapturePending = false
-    }
-
-    fun destroy() {
-        Log.d(logTag, "destroy audio record handle")
-
-        audioRecordStat = false
-        audioThread?.join()
     }
 }

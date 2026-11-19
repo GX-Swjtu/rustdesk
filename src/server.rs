@@ -136,7 +136,7 @@ pub fn new() -> ServerPtr {
         id_count: hbb_common::rand::random::<i32>() % 1000 + 1000, // ensure positive
     };
     server.add_service(Box::new(audio_service::new()));
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         server.add_service(Box::new(display_service::new()));
         server.add_service(Box::new(clipboard_service::new(
@@ -210,6 +210,18 @@ async fn accept_connection_(
     Ok(())
 }
 
+#[cfg(target_os = "android")]
+pub async fn create_tcp_connection(
+    _: ServerPtr,
+    _: Stream,
+    _: SocketAddr,
+    _: bool,
+    _: ConnectionMeta,
+) -> ResultType<()> {
+    bail!("Android accepts outgoing sessions only")
+}
+
+#[cfg(not(target_os = "android"))]
 pub async fn create_tcp_connection(
     server: ServerPtr,
     stream: Stream,
@@ -645,7 +657,7 @@ pub fn check_zombie() {
 /// * `is_server` - Whether the current client is definitely the server.
 /// If true, the server will be started.
 /// Otherwise, client will check if there's already a server and start one if not.
-#[cfg(any(target_os = "android", target_os = "ios"))]
+#[cfg(target_os = "ios")]
 #[tokio::main]
 pub async fn start_server(_is_server: bool) {
     allow_err!(crate::trusted_devices::initialize());

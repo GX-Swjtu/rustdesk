@@ -591,14 +591,24 @@ class ChatModel with ChangeNotifier {
     TextInput.restorePlatformInputControl();
   }
 
+  Future<void> requestVoiceCall(SessionID targetSessionId) async {
+    if (isAndroid &&
+        await gFFI.invokeMethod("request_voice_call_permission") != true) {
+      return;
+    }
+    await bind.sessionRequestVoiceCall(sessionId: targetSessionId);
+  }
+
   void onVoiceCallWaiting() {
     _voiceCallStatus.value = VoiceCallStatus.waitingForResponse;
   }
 
-  void onVoiceCallStarted() {
+  void onVoiceCallStarted() async {
     _voiceCallStatus.value = VoiceCallStatus.connected;
     if (isAndroid) {
-      parent.target?.invokeMethod("on_voice_call_started");
+      if (await parent.target?.invokeMethod("on_voice_call_started") != true) {
+        closeVoiceCall();
+      }
     }
   }
 

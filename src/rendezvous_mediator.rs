@@ -309,6 +309,7 @@ impl RendezvousMediator {
         log::info!("server restart");
     }
 
+    #[cfg(not(target_os = "android"))]
     pub async fn start_all() {
         crate::test_nat_type();
         if config::is_outgoing_only() {

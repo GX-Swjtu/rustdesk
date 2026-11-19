@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import zipfile
 import suite
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -141,6 +142,44 @@ def digest(file):
     return sha.hexdigest()
 
 
+def verify_android_controller(apk, build_tools):
+    # Check the merged manifest, including permissions introduced by Flutter plugins.
+    manifest = command(str(build_tools / "aapt"), "dump", "xmltree", str(apk), "AndroidManifest.xml")
+    for name in ("BIND_ACCESSIBILITY_SERVICE", "RECEIVE_BOOT_COMPLETED", "SYSTEM_ALERT_WINDOW",
+                 "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS", "FOREGROUND_SERVICE", "MANAGE_EXTERNAL_STORAGE",
+                 "READ_EXTERNAL_STORAGE", "WRITE_EXTERNAL_STORAGE", "POST_NOTIFICATIONS"):
+        if "android.permission." + name in manifest:
+            raise ValueError(f"{apk.name}: unexpected host permission {name}")
+    for component in ("MainService", "InputService", "BootReceiver", "FloatingWindowService",
+                      "PermissionRequestTransparentActivity"):
+        if f".{component}\"" in manifest:
+            raise ValueError(f"{apk.name}: unexpected host component {component}")
+    with zipfile.ZipFile(apk) as package:
+        dex_files = [p for p in package.namelist() if re.fullmatch(r"classes\d*\.dex", p)]
+        if not dex_files:
+            raise ValueError(f"{apk.name}: missing DEX")
+        # Framework descriptors survive R8 renaming of our Kotlin classes.
+        for path in dex_files:
+            dex = package.read(path)
+            for descriptor in (b"Landroid/accessibilityservice/AccessibilityService;",
+                               b"Landroid/media/projection/MediaProjectionManager;"):
+                if descriptor in dex:
+                    raise ValueError(f"{apk.name}: {path} references {descriptor!r}")
+        libraries = [p for p in package.namelist() if re.fullmatch(r"lib/[^/]+/librustdesk\.so", p)]
+        if not libraries:
+            raise ValueError(f"{apk.name}: missing Rust library")
+        for path in package.namelist():
+            if path.endswith("/libflutter.so") and path.replace("/libflutter.so", "/librustdesk.so") not in libraries:
+                raise ValueError(f"{apk.name}: missing Rust library alongside {path}")
+        for path in libraries:
+            library = package.read(path)
+            for symbol in (b"startServer", b"startService", b"onVideoFrameUpdate", b"refreshScreen"):
+                if b"Java_ffi_FFI_" + symbol + b"\0" in library:
+                    raise ValueError(f"{apk.name}: {path} exports host JNI {symbol!r}")
+            if b"Java_ffi_FFI_initNativeP2p\0" not in library:
+                raise ValueError(f"{apk.name}: {path} missing native P2P initialization")
+
+
 def verify_apk(tag, apk):
     expected = parse_tag(tag)[2]
     build_tools = Path(os.environ["ANDROID_HOME"]) / "build-tools" / os.environ["ANDROID_SIGN_TOOL_VERSION"]
@@ -148,6 +187,9 @@ def verify_apk(tag, apk):
     code = re.search(r"^package: .*versionCode='(\d+)'", badging, re.M)
     if not code or int(code[1]) != expected:
         raise ValueError(f"APK versionCode must be {expected} for both ABI and Universal downloads")
+    if not badging.startswith("package: name='com.gxdesk.android' ") or "application-label:'GxDesk'" not in badging.splitlines():
+        raise ValueError(f"{apk.name}: unexpected Android application ID or label")
+    verify_android_controller(apk, build_tools)
     command(str(build_tools / "apksigner"), "verify", str(apk))
     print(f"Verified signed APK with versionCode {expected}: {apk.name}")
 
@@ -161,8 +203,8 @@ def notes(tag, upstream, assets):
              "Install manually. Windows is not Authenticode signed; macOS is not notarized; Android uses this fork's persistent signing key.",
              "iOS 提供未签名 Xcode 归档，需要自己的 Apple 签名才能安装。Web 沿用上游独立发布渠道，此仓库的旧 Web 构建已被上游停用。",
              "iOS is an unsigned Xcode archive requiring your own Apple signing. The legacy Web build in this repository is disabled upstream; no official Web/App Store links are presented as fork downloads.",
-             "首次从官方版或本地测试 APK 切换时，签名不同可能需要卸载。先备份设置。后续本 fork APK 使用同一签名升级。",
-             "When migrating from official or locally signed APKs, a different signature may require uninstalling first. Back up settings. Subsequent fork APKs retain the same signing identity.",
+             "Android 版 GxDesk 仅支持主动连接其他设备。新应用 ID `com.gxdesk.android` 可与旧包并存，需单独配置。若已安装同 ID 的本地测试包，请先备份设置，签名不同时需卸载测试包。",
+             "GxDesk for Android connects out to other devices. Its new app ID `com.gxdesk.android` installs alongside the previous package with separate settings. If a locally signed test APK already uses this ID, back up its settings before uninstalling it to switch signing keys.",
              f"服务端部署 / Server deployment: [指南](https://github.com/{REPO}/blob/{tag}/docs/server-deployment.md). 客户端填写 / Client setup: [指南](https://github.com/{REPO}/blob/{tag}/docs/client-setup.md). 离线指南包含在 `rustdesk-{tag}-server-guide.zip`。",
              "配套 hbbs/hbbr、账号服务及两套 hbb_common 基线随本版一起提供；精确提交见 `suite-components.json`。服务器需要手动部署，客户端更新不会自动升级服务器。 Companion servers and both common-library sources are pinned in suite-components.json; deploy servers separately.",
              "## 下载 / Downloads", "| 文件 / File | 下载 / Download |", "| --- | --- |"]

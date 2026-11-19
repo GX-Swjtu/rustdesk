@@ -1233,6 +1233,15 @@ pub fn get_app_name() -> String {
     hbb_common::config::APP_NAME.read().unwrap().clone()
 }
 
+// The display brand is independent of the wire protocol, URI scheme and update channel.
+pub(crate) fn app_display_name() -> String {
+    if cfg!(target_os = "android") {
+        "GxDesk".to_owned()
+    } else {
+        get_app_name()
+    }
+}
+
 #[inline]
 pub fn is_rustdesk() -> bool {
     hbb_common::config::APP_NAME.read().unwrap().eq("RustDesk")

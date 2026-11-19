@@ -468,7 +468,7 @@ void registerSessionShortcutActions(
           status == VoiceCallStatus.waitingForResponse) {
         bind.sessionCloseVoiceCall(sessionId: sessionId);
       } else {
-        bind.sessionRequestVoiceCall(sessionId: sessionId);
+        ffi.chatModel.requestVoiceCall(sessionId);
       }
     });
   }

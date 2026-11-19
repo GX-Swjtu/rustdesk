@@ -2196,7 +2196,6 @@ Future<bool> initUniLinks() async {
   // check cold boot
   try {
     final initialLink = await getInitialLink();
-    print("initialLink: $initialLink");
     if (initialLink == null || initialLink.isEmpty) {
       return false;
     }
@@ -2207,7 +2206,7 @@ Future<bool> initUniLinks() async {
       return handleUriLink(uriString: initialLink);
     }
   } catch (err) {
-    debugPrintStack(label: "$err");
+    debugPrintStack(label: "Deep link handling failed (${err.runtimeType})");
     return false;
   }
 }
@@ -2223,7 +2222,6 @@ StreamSubscription? listenUniLinks({handleByFlutter = true}) {
   }
 
   final sub = uriLinkStream.listen((Uri? uri) {
-    debugPrint("A uri was received: $uri. handleByFlutter $handleByFlutter");
     if (uri != null) {
       if (handleByFlutter) {
         handleUriLink(uri: uri);
@@ -2234,7 +2232,7 @@ StreamSubscription? listenUniLinks({handleByFlutter = true}) {
       print("uni listen error: uri is empty.");
     }
   }, onError: (err) {
-    print("uni links error: $err");
+    debugPrint("Deep link listener failed (${err.runtimeType})");
   });
   return sub;
 }

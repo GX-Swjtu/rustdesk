@@ -1,7 +1,27 @@
+import 'dart:async';
+
+import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
-import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_test/flutter_test.dart' hide isLinux;
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('cold-start link credentials stay out of logs', () async {
+    const channel = MethodChannel('uni_links/messages');
+    const marker = 'test-link-secret';
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+        channel, (_) async => 'rustdesk://x/unused?password=$marker');
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final messages = <String>[];
+    await runZoned(initUniLinks, zoneSpecification: ZoneSpecification(
+      print: (_, __, ___, message) => messages.add(message),
+    ));
+    expect(messages.join('\n'), isNot(contains(marker)));
+  }, skip: isLinux || isWeb); // Linux uses D-Bus to receive links.
+
   test('request-approval links preserve their connection type', () {
     for (final type in [
       'connect',

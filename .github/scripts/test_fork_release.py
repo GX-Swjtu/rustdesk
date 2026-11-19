@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("fork_release", Path(__file__).with_name("fork_release.py"))
@@ -53,8 +54,31 @@ class ForkReleaseTests(unittest.TestCase):
             for offset in [1000, 2000, 4000]:
                 with patch.object(release, "command", return_value=f"package: name='rustdesk' versionCode='{expected + offset}'"), self.assertRaises(ValueError):
                     release.verify_apk(tag, Path("arm.apk"))
-            with patch.object(release, "command", side_effect=[f"package: name='rustdesk' versionCode='{expected}'", ""]):
+            badging = f"package: name='com.gxdesk.android' versionCode='{expected}'\napplication-label:'GxDesk'"
+            with patch.object(release, "verify_android_controller"), patch.object(release, "command", side_effect=[badging, ""]):
                 release.verify_apk(tag, Path("universal.apk"))
+
+    def test_android_host_reintroduced_by_merge(self):
+        p2p = b"Java_ffi_FFI_initNativeP2p\0"
+        with tempfile.TemporaryDirectory() as directory:
+            apk = Path(directory) / "universal.apk"
+            for manifest, dex, native, error in [
+                ("", b"", p2p, None),
+                ("android.permission.SYSTEM_ALERT_WINDOW", b"", p2p, "host permission"),
+                ("", b"Landroid/accessibilityservice/AccessibilityService;", p2p, "classes2.dex"),
+                ("", b"", p2p + b"Java_ffi_FFI_startServer\0", "lib/x86_64"),
+            ]:
+                with self.subTest(error=error), patch.object(release, "command", return_value=manifest):
+                    with zipfile.ZipFile(apk, "w") as package:
+                        package.writestr("classes.dex", b"")
+                        package.writestr("classes2.dex", dex)
+                        package.writestr("lib/arm64-v8a/librustdesk.so", p2p)
+                        package.writestr("lib/x86_64/librustdesk.so", native)
+                    if error:
+                        with self.assertRaisesRegex(ValueError, error):
+                            release.verify_android_controller(apk, Path("/sdk"))
+                    else:
+                        release.verify_android_controller(apk, Path("/sdk"))
 
     def test_finalization_requires_every_build_output_before_writing_completion_marker(self):
         tag = "1.5.1-gx.3"
