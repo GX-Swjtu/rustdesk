@@ -31,6 +31,8 @@ Android 安装包仅支持从手机主动连接其他设备。合并上游时，
 
 发布检查会读取每个 ABI 和通用 APK 的合并清单、DEX 和 Rust 动态库。上游新增 Android 服务、权限或 JNI 导出时，请核对它们是否属于主控功能，并同步检查规则。
 
+本地打 Android 测试包时，在 `flutter/` 目录确认 `flutter pub get` 成功，再执行 `flutter build apk --release`。Flutter 会生成 Android 插件注册类。跳过失败的依赖准备、直接执行 Gradle 可能产出可安装但启动黑屏的 APK。发布检查也会检查最终 DEX 中的注册类。
+
 Android 合并时重点复核以下路径。
 
 - `flutter/android/app/build.gradle`、应用清单和资源决定系统包名、可启动组件及 APK 依赖。Kotlin 的 `MainActivity`、`AudioRecordHandle`、`RdClipboardManager`、`common.kt` 和 `ffi.kt` 保留主控会话、文件选择、麦克风通话和剪贴板。

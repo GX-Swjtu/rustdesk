@@ -159,12 +159,17 @@ def verify_android_controller(apk, build_tools):
         if not dex_files:
             raise ValueError(f"{apk.name}: missing DEX")
         # Framework descriptors survive R8 renaming of our Kotlin classes.
+        has_plugin_registrant = False
         for path in dex_files:
             dex = package.read(path)
+            if b"Lio/flutter/plugins/GeneratedPluginRegistrant;" in dex:
+                has_plugin_registrant = True
             for descriptor in (b"Landroid/accessibilityservice/AccessibilityService;",
                                b"Landroid/media/projection/MediaProjectionManager;"):
                 if descriptor in dex:
                     raise ValueError(f"{apk.name}: {path} references {descriptor!r}")
+        if not has_plugin_registrant:
+            raise ValueError(f"{apk.name}: missing Flutter plugin registrant; build with flutter build apk")
         libraries = [p for p in package.namelist() if re.fullmatch(r"lib/[^/]+/librustdesk\.so", p)]
         if not libraries:
             raise ValueError(f"{apk.name}: missing Rust library")

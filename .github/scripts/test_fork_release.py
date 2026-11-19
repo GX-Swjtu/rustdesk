@@ -58,15 +58,17 @@ class ForkReleaseTests(unittest.TestCase):
             with patch.object(release, "verify_android_controller"), patch.object(release, "command", side_effect=[badging, ""]):
                 release.verify_apk(tag, Path("universal.apk"))
 
-    def test_android_host_reintroduced_by_merge(self):
+    def test_android_controller_checks_all_dex_files_and_native_libraries(self):
         p2p = b"Java_ffi_FFI_initNativeP2p\0"
+        registrant = b"Lio/flutter/plugins/GeneratedPluginRegistrant;"
         with tempfile.TemporaryDirectory() as directory:
             apk = Path(directory) / "universal.apk"
             for manifest, dex, native, error in [
-                ("", b"", p2p, None),
+                ("", registrant, p2p, None),
+                ("", b"", p2p, "missing Flutter plugin registrant"),
                 ("android.permission.SYSTEM_ALERT_WINDOW", b"", p2p, "host permission"),
                 ("", b"Landroid/accessibilityservice/AccessibilityService;", p2p, "classes2.dex"),
-                ("", b"", p2p + b"Java_ffi_FFI_startServer\0", "lib/x86_64"),
+                ("", registrant, p2p + b"Java_ffi_FFI_startServer\0", "lib/x86_64"),
             ]:
                 with self.subTest(error=error), patch.object(release, "command", return_value=manifest):
                     with zipfile.ZipFile(apk, "w") as package:
